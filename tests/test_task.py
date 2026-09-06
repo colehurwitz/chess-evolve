@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from factory.task import TaskInstance, VerifyResult
 
-from chess_evolve.config import ELO_OPTIONS, GAMES_PER_EVAL
+from chess_evolve.config import ELO_OPTIONS, GAMES_PER_EVAL, MAX_MOVES
 from chess_evolve.game import EvalResult
 from chess_evolve.task import ChessEvolveTask
 
@@ -119,6 +119,76 @@ class TestChessEvolveTaskSetup:
         instance = TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320})
         task.setup(instance, workspace)
         mock_setup.assert_called_once_with(workspace)
+
+
+# ── Test: prompt() ───────────────────────────────────────────────
+
+
+class TestChessEvolveTaskPrompt:
+    def test_prompt_is_not_the_generic_base_prompt(self):
+        """The base Task.prompt() returns a generic placeholder — the chess
+        task must override it with domain-specific instructions."""
+        task = ChessEvolveTask()
+        instance = TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320})
+        assert task.prompt(instance) != "Implement the feature. All tests must pass."
+
+    def test_prompt_mentions_instance_opponent_elo(self):
+        task = ChessEvolveTask()
+        for elo in ELO_OPTIONS:
+            instance = TaskInstance(id=f"elo_{elo}", metadata={"opponent_elo": elo})
+            assert str(elo) in task.prompt(instance)
+
+    def test_prompt_differs_per_instance(self):
+        task = ChessEvolveTask()
+        prompts = {task.prompt(inst) for inst in task.instances()}
+        assert len(prompts) == len(ELO_OPTIONS)
+
+    def test_prompt_mentions_games_per_eval(self):
+        task = ChessEvolveTask()
+        instance = TaskInstance(
+            id="elo_1520", metadata={"opponent_elo": 1520, "games_per_eval": 7}
+        )
+        assert "7" in task.prompt(instance)
+
+    def test_prompt_defaults_games_per_eval(self):
+        task = ChessEvolveTask()
+        instance = TaskInstance(
+            id="elo_1320",
+            metadata={"opponent_elo": 1320},  # no games_per_eval key
+        )
+        assert str(GAMES_PER_EVAL) in task.prompt(instance)
+
+    def test_prompt_survives_instance_without_metadata(self):
+        """Task.run() may hand over a bare instance; prompt() must not raise."""
+        task = ChessEvolveTask()
+        text = task.prompt(TaskInstance(id="default"))
+        assert isinstance(text, str)
+        assert text.strip()
+
+    def test_prompt_describes_move_artifact_contract(self):
+        task = ChessEvolveTask()
+        text = task.prompt(TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320}))
+        assert ".factory/chess/board_state.md" in text
+        assert ".factory/chess/move.md" in text
+        assert "UCI" in text
+
+    def test_prompt_names_the_mutable_surfaces(self):
+        task = ChessEvolveTask()
+        text = task.prompt(TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320}))
+        assert "src/chess_evolve/prompts.py" in text
+        assert "src/chess_evolve/pipeline.py" in text
+
+    def test_prompt_explains_scoring(self):
+        task = ChessEvolveTask()
+        text = task.prompt(TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320}))
+        assert "composite_score" in text
+        assert str(MAX_MOVES) in text
+
+    def test_prompt_has_no_unresolved_placeholders(self):
+        task = ChessEvolveTask()
+        for inst in task.instances():
+            text = task.prompt(inst)
+            assert "{" not in text and "}" not in text
 
 
 # ── Test: verify() ───────────────────────────────────────────────
