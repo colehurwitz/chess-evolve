@@ -15,7 +15,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Iterator
 
-from factory.task import Task, TaskDefinition, TaskInstance, VerifyResult
+from factory.task import Task, TaskConstraints, TaskDefinition, TaskInstance, VerifyResult
 
 from chess_evolve.config import ELO_OPTIONS, GAMES_PER_EVAL
 from chess_evolve.engine import setup_workspace
@@ -90,6 +90,7 @@ class ChessEvolveTask(Task):
         defn = TaskDefinition(
             name="chess-evolve",
             description="Evaluate LLM chess play against Stockfish at various ELO levels",
+            constraints=TaskConstraints(required_capabilities=[]),
         )
         super().__init__(definition=defn)
 
