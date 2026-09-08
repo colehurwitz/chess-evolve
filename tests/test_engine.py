@@ -5,7 +5,6 @@ from __future__ import annotations
 import chess
 
 from chess_evolve.engine import _ascii_board, _board_user_msg, _extract_move
-from chess_evolve.pipeline import PipelineConfig
 
 
 class TestExtractMove:
