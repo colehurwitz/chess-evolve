@@ -3,14 +3,17 @@ equivalent data to the existing EvalResult-based evaluation path."""
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from factory.task import TaskInstance, VerifyResult
+from factory.task import Task, TaskInstance, VerifyResult
 
 from chess_evolve.config import ELO_OPTIONS, GAMES_PER_EVAL
 from chess_evolve.game import EvalResult
-from chess_evolve.task import ChessEvolveTask
+from chess_evolve.pipeline import PipelineConfig
+from chess_evolve.task import ChessEvolveTask, config_from_workflow
 
 # ── Fixtures ────────────────────────────────────────────────────
 
@@ -301,3 +304,196 @@ class TestChessEvolveTaskName:
     def test_task_name(self):
         task = ChessEvolveTask()
         assert task.name == "chess-evolve"
+
+
+# ── Test: config_from_workflow() ─────────────────────────────────
+
+
+class TestConfigFromWorkflow:
+    def test_no_workflow_returns_default_config(self):
+        default = PipelineConfig()
+        cfg = config_from_workflow(1320)
+        assert cfg.opponent_elo == 1320
+        assert cfg.max_retries == default.max_retries
+        assert cfg.generator_style == default.generator_style
+
+    def test_workflow_without_knob_values_returns_default_config(self):
+        default = PipelineConfig()
+        cfg = config_from_workflow(1320, SimpleNamespace(name="candidate-3"))
+        assert cfg.max_retries == default.max_retries
+        assert cfg.generator_style == default.generator_style
+
+    def test_knob_values_from_workflow_attribute(self):
+        workflow = SimpleNamespace(
+            knob_values={"max_retries": 5, "generator_style": "tactical"}
+        )
+        cfg = config_from_workflow(1420, workflow)
+        assert cfg.opponent_elo == 1420
+        assert cfg.max_retries == 5
+        assert cfg.generator_style == "tactical"
+
+    def test_knob_values_from_raw_dict_workflow(self):
+        cfg = config_from_workflow(1520, {"knob_values": {"max_retries": 2}})
+        assert cfg.max_retries == 2
+
+    def test_compiled_float_knob_coerced_back_to_int(self):
+        """Package.compile() widens ints to floats — coerce them back."""
+        cfg = config_from_workflow(1320, {"knob_values": {"max_retries": 5.0}})
+        assert cfg.max_retries == 5
+        assert isinstance(cfg.max_retries, int)
+
+    def test_stringified_int_knob_coerced_back_to_int(self):
+        cfg = config_from_workflow(1320, {"knob_values": {"max_retries": "2"}})
+        assert cfg.max_retries == 2
+        assert isinstance(cfg.max_retries, int)
+
+    def test_uncoercible_value_falls_back_to_default(self):
+        default = PipelineConfig()
+        cfg = config_from_workflow(1320, {"knob_values": {"max_retries": "abc"}})
+        assert cfg.max_retries == default.max_retries
+
+    def test_non_positive_max_retries_falls_back_to_default(self):
+        """max_retries=0 would make the move loop never run — reject it."""
+        default = PipelineConfig()
+        cfg = config_from_workflow(1320, {"knob_values": {"max_retries": 0}})
+        assert cfg.max_retries == default.max_retries
+
+    def test_unknown_knob_is_ignored(self):
+        cfg = config_from_workflow(1320, {"knob_values": {"not_a_knob": 7}})
+        assert not hasattr(cfg, "not_a_knob")
+
+    def test_knob_values_of_wrong_type_ignored(self):
+        default = PipelineConfig()
+        cfg = config_from_workflow(1320, SimpleNamespace(knob_values="nope"))
+        assert cfg.max_retries == default.max_retries
+
+    def test_partial_knob_values_leave_other_knobs_at_default(self):
+        default = PipelineConfig()
+        cfg = config_from_workflow(1320, {"knob_values": {"max_retries": 1}})
+        assert cfg.max_retries == 1
+        assert cfg.generator_style == default.generator_style
+
+
+# ── Test: verify() honours the candidate workflow ────────────────
+
+
+class TestChessEvolveTaskVerifyWorkflow:
+    @patch("chess_evolve.task.build_pipeline")
+    @patch("chess_evolve.task.evaluate_pipeline", new_callable=AsyncMock)
+    def test_verify_applies_workflow_knobs_to_pipeline_config(
+        self, mock_eval: AsyncMock, mock_build: MagicMock
+    ):
+        mock_eval.return_value = _make_mock_eval_result()
+        mock_build.return_value = MagicMock()
+
+        task = ChessEvolveTask()
+        instance = TaskInstance(
+            id="elo_1420",
+            metadata={"opponent_elo": 1420, "games_per_eval": 1},
+        )
+        workflow = SimpleNamespace(
+            knob_values={"max_retries": 5, "generator_style": "tactical"}
+        )
+        task.verify(instance, Path("/tmp/test-workspace"), workflow)
+
+        cfg = mock_build.call_args[0][0]
+        assert cfg.opponent_elo == 1420
+        assert cfg.max_retries == 5
+        assert cfg.generator_style == "tactical"
+
+    @patch("chess_evolve.task.build_pipeline")
+    @patch("chess_evolve.task.evaluate_pipeline", new_callable=AsyncMock)
+    def test_verify_without_workflow_uses_default_knobs(
+        self, mock_eval: AsyncMock, mock_build: MagicMock
+    ):
+        mock_eval.return_value = _make_mock_eval_result()
+        mock_build.return_value = MagicMock()
+
+        task = ChessEvolveTask()
+        instance = TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320})
+        task.verify(instance, Path("/tmp/test-workspace"))
+
+        default = PipelineConfig()
+        cfg = mock_build.call_args[0][0]
+        assert cfg.max_retries == default.max_retries
+        assert cfg.generator_style == default.generator_style
+
+
+# ── Test: run() ──────────────────────────────────────────────────
+
+
+class TestChessEvolveTaskRun:
+    @patch("chess_evolve.task.setup_workspace")
+    @patch("chess_evolve.task.build_pipeline")
+    @patch("chess_evolve.task.evaluate_pipeline", new_callable=AsyncMock)
+    def test_run_calls_setup_then_verify(
+        self,
+        mock_eval: AsyncMock,
+        mock_build: MagicMock,
+        mock_setup: MagicMock,
+    ):
+        mock_eval.return_value = _make_mock_eval_result()
+        mock_build.return_value = MagicMock()
+
+        task = ChessEvolveTask()
+        instance = TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320})
+        workspace = Path("/tmp/test-workspace")
+        result = task.run(instance, workspace)
+
+        mock_setup.assert_called_once_with(workspace)
+        mock_eval.assert_awaited_once()
+        assert isinstance(result, VerifyResult)
+
+    @patch("chess_evolve.task.setup_workspace")
+    @patch("chess_evolve.task.build_pipeline")
+    @patch("chess_evolve.task.evaluate_pipeline", new_callable=AsyncMock)
+    def test_run_forwards_workflow_knobs_to_verify(
+        self,
+        mock_eval: AsyncMock,
+        mock_build: MagicMock,
+        mock_setup: MagicMock,
+    ):
+        mock_eval.return_value = _make_mock_eval_result()
+        mock_build.return_value = MagicMock()
+
+        task = ChessEvolveTask()
+        instance = TaskInstance(id="elo_1620", metadata={"opponent_elo": 1620})
+        workflow = SimpleNamespace(
+            name="ephemeral-candidate-2",
+            knob_values={"max_retries": 1, "generator_style": "positional"},
+        )
+        task.run(instance, Path("/tmp/test-workspace"), workflow)
+
+        cfg = mock_build.call_args[0][0]
+        assert cfg.opponent_elo == 1620
+        assert cfg.max_retries == 1
+        assert cfg.generator_style == "positional"
+
+    @patch("subprocess.run")
+    @patch("chess_evolve.task.setup_workspace")
+    @patch("chess_evolve.task.build_pipeline")
+    @patch("chess_evolve.task.evaluate_pipeline", new_callable=AsyncMock)
+    def test_run_does_not_spawn_ceo_subprocess(
+        self,
+        mock_eval: AsyncMock,
+        mock_build: MagicMock,
+        mock_setup: MagicMock,
+        mock_subprocess: MagicMock,
+    ):
+        """The base Task.run shells out to `factory ceo --mode <workflow>`,
+        which cannot resolve the outer loop's ephemeral mode names from a
+        worktree. The override must evaluate in-process instead."""
+        mock_eval.return_value = _make_mock_eval_result()
+        mock_build.return_value = MagicMock()
+
+        task = ChessEvolveTask()
+        instance = TaskInstance(id="elo_1320", metadata={"opponent_elo": 1320})
+        workflow = SimpleNamespace(name="ephemeral-candidate-1", knob_values={})
+        task.run(instance, Path("/tmp/test-workspace"), workflow)
+
+        mock_subprocess.assert_not_called()
+
+    def test_run_signature_matches_base_task(self):
+        """The outer loop calls run(instance, workspace, workflow)."""
+        params = list(inspect.signature(ChessEvolveTask.run).parameters)
+        assert params == list(inspect.signature(Task.run).parameters)
