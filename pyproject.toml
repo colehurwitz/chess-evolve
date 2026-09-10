@@ -39,5 +39,4 @@ line-length = 100
 select = ["E", "F", "I", "W"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/chess_evolve/serve.py" = ["E501"]
 "src/chess_evolve/dashboard/app.py" = ["E501"]

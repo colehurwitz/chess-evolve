@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
 import resource
@@ -45,7 +44,6 @@ def main() -> None:
         description="Chess prompt evolution via remote-factory",
     )
     sub = parser.add_subparsers(dest="command")
-
     sub.add_parser("run", help="Run the evolution loop")
 
     serve_parser = sub.add_parser("serve", help="Start the live dashboard")
@@ -154,8 +152,6 @@ def main() -> None:
             f"({aggregate.get('passes', 0)}/{aggregate.get('count', 0)})"
         )
         print(f"results written to {aggregate.get('results_path')}")
-        # Propagate workflow halts/errors (e.g. invalid FEN) to the shell so
-        # CI and downstream `$?` checks see the failure. Successful evals exit 0.
         if aggregate.get("halted"):
             halt_reason = aggregate.get("halt_reason") or "workflow halted"
             print(f"[error] eval halted: {halt_reason}", file=sys.stderr)
