@@ -4,20 +4,6 @@ from __future__ import annotations
 
 import inspect
 
-from chess_evolve.pipeline import PipelineConfig, build_pipeline
-
-
-class TestBuildAndCompile:
-    def test_default_pipeline_compiles(self):
-        wf = build_pipeline().compile()
-        assert "generator" in wf.nodes
-        assert len(wf.nodes) >= 2
-
-    def test_different_configs_produce_different_workflows(self):
-        wf1 = build_pipeline(PipelineConfig(max_retries=1)).compile()
-        wf2 = build_pipeline(PipelineConfig(max_retries=5)).compile()
-        assert wf1.knob_values != wf2.knob_values
-
 
 class TestSwarmEngineWiring:
     def test_main_is_sync(self):

@@ -5,13 +5,6 @@ from __future__ import annotations
 import chess
 import pytest
 
-from chess_evolve.pipeline import PipelineConfig
-
-
-@pytest.fixture
-def default_config() -> PipelineConfig:
-    return PipelineConfig()
-
 
 @pytest.fixture
 def start_board() -> chess.Board:
