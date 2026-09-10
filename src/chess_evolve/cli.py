@@ -126,5 +126,11 @@ def main() -> None:
             f"({aggregate.get('passes', 0)}/{aggregate.get('count', 0)})"
         )
         print(f"results written to {aggregate.get('results_path')}")
+        # Propagate workflow halts/errors (e.g. invalid FEN) to the shell so
+        # CI and downstream `$?` checks see the failure. Successful evals exit 0.
+        if aggregate.get("halted"):
+            halt_reason = aggregate.get("halt_reason") or "workflow halted"
+            print(f"[error] eval halted: {halt_reason}", file=sys.stderr)
+            sys.exit(1)
     else:
         parser.print_help()

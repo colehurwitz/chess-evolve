@@ -277,3 +277,28 @@ class TestWorkflow:
         out = tmp_path / ".factory" / "chess" / "eval_results.json"
         assert out.exists()
         assert json.loads(out.read_text())["count"] == aggregate["count"]
+
+    def test_datanode_run_halts_on_invalid_fen(self, monkeypatch, tmp_path):
+        # Invalid FEN must halt the workflow so the aggregate signals halted.
+        bad_file = tmp_path / "bad_positions.json"
+        bad_file.write_text(json.dumps([
+            {"id": "bad-one", "phase": "opening", "fen": "not-a-valid-fen"},
+        ]))
+
+        async def _fake_invoke(role, task, project_path, model=None,
+                               timeout=25.0, **kwargs):
+            return "e2e4", 0
+
+        import factory.agents.runner as runner
+        monkeypatch.setattr(runner, "invoke_agent", _fake_invoke)
+        monkeypatch.setattr(
+            "chess_evolve.tasks.resolve_stockfish", lambda: "/fake/stockfish",
+        )
+
+        aggregate = asyncio.run(position_eval.run_position_eval(
+            positions_file=str(bad_file), depth=1, workspace=tmp_path,
+        ))
+
+        assert aggregate["halted"] is True
+        assert aggregate.get("halt_reason")
+        assert aggregate["per_instance"] == []

@@ -15,6 +15,31 @@ from chess_evolve.pipeline import PipelineConfig, build_position_eval_workflow
 DATA_NODE_ID = "positions"
 
 
+async def _position_move_invoke(
+    role: str,
+    task: str,
+    project_path: Path,
+    model: str | None = None,
+    timeout: float = 25.0,
+    **kwargs: object,
+) -> tuple[str, int]:
+    """invoke_agent shim for position eval that also persists the move.
+
+    The stock WorkflowExecutor keeps AgentNode output only in memory; the
+    PositionTask.verify hook reads ``.factory/chess/move.md`` from disk, so this
+    wrapper writes the generated move there after invoking the model.
+    """
+    from chess_evolve.engine import _sdk_invoke_agent
+
+    text, code = await _sdk_invoke_agent(
+        role, task, project_path, model=model, timeout=timeout, **kwargs,
+    )
+    move_file = Path(project_path) / ".factory" / "chess" / "move.md"
+    move_file.parent.mkdir(parents=True, exist_ok=True)
+    move_file.write_text(text or "")
+    return text, code
+
+
 def _prime_workspace(workspace: Path) -> None:
     """Create the chess dir and placeholder read-files the generator expects.
 
@@ -102,7 +127,6 @@ async def run_position_eval(
     # for a shim that also writes .factory/chess/move.md so verify() can read it.
     import factory.agents.runner as _runner
 
-    from chess_evolve.engine import _position_move_invoke
     _orig_invoke = _runner.invoke_agent
     _runner.invoke_agent = _position_move_invoke  # type: ignore[assignment]
     try:
