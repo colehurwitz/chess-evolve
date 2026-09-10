@@ -1,10 +1,11 @@
-"""PositionTask — per-position move-quality evaluation as a factory Task.
+"""PositionTask & GameTask — factory Task implementations for chess-evolve.
 
-Implements the real four-hook ``factory.task.Task`` interface
-(``instances`` / ``setup`` / ``prompt`` / ``verify``) so a ``DataNode`` with
-``task_ref='chess_evolve.tasks:PositionTask'`` can drive the move-generator
-subgraph once per position and score each chosen move against Stockfish's best
-move (centipawn loss).
+PositionTask: per-position move-quality evaluation (centipawn loss).
+GameTask: full-game evaluation with rich verify() details for reflector.
+
+Both implement the four-hook ``factory.task.Task`` interface
+(``instances`` / ``setup`` / ``prompt`` / ``verify``) so a ``DataNode`` can
+drive a subgraph and score the result.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import chess
 import chess.engine
 from factory.task import Task, TaskInstance, VerifyResult
 
-from chess_evolve.config import resolve_stockfish
+from chess_evolve.config import ELO_OPTIONS, resolve_stockfish
 from chess_evolve.engine import read_move, write_board_state
 
 # Scores at/above this magnitude are treated as "mate-scale" (checkmate found).
@@ -196,5 +197,139 @@ class PositionTask(Task):
                 "best_move": best_move_uci,
                 "fen": fen,
                 "phase": instance.metadata.get("phase", ""),
+            },
+        )
+
+
+# ── GameTask — full game evaluation ─────────────────────────────
+
+
+def _extract_blunders(
+    eval_curve: list[int], move_list: list[str],
+) -> list[dict]:
+    """Extract structured blunder records from an eval curve.
+
+    A blunder is a >200 centipawn drop between consecutive evaluations.
+    Returns a list of dicts with move context for the reflector.
+    """
+    blunders: list[dict] = []
+    for i in range(1, len(eval_curve)):
+        drop = eval_curve[i] - eval_curve[i - 1]
+        if drop < -200:
+            blunders.append({
+                "move_index": i,
+                "move_num": i // 2 + 1,
+                "move_uci": move_list[i] if i < len(move_list) else "?",
+                "cp_before": eval_curve[i - 1],
+                "cp_after": eval_curve[i],
+                "cp_drop": drop,
+            })
+    return blunders
+
+
+class GameTask(Task):
+    """Evaluate a full game against Stockfish, returning rich details.
+
+    ``verify()`` is a **scorer only** — it reads ``game_state.json`` from the
+    workspace (written by the ``game_gate`` GateNode calling
+    ``advance_game_state``) and scores the completed game.  The game loop
+    itself lives in the workflow subgraph (``Loop(generator → game_gate)``).
+    """
+
+    def instances(self) -> Iterator[TaskInstance]:
+        """Yield one ``TaskInstance`` per ELO × color combination."""
+        for elo in ELO_OPTIONS:
+            for color in ("white", "black"):
+                yield TaskInstance(
+                    id=f"elo{elo}_{color}",
+                    metadata={"opponent_elo": elo, "color": color},
+                )
+
+    def setup(self, instance: TaskInstance, workspace: Path) -> None:
+        """Write starting position and initialize ``game_state.json``."""
+        workspace = Path(workspace)
+        chess_dir = workspace / ".factory" / "chess"
+        chess_dir.mkdir(parents=True, exist_ok=True)
+        board = chess.Board()
+        write_board_state(workspace, board)
+        game_state = {
+            "opponent_elo": instance.metadata["opponent_elo"],
+            "color": instance.metadata["color"],
+            "fen": board.fen(),
+            "move_list": [],
+            "eval_curve": [],
+            "illegal_attempts": 0,
+            "move_count": 0,
+            "result": None,
+            "game_over": False,
+        }
+        (chess_dir / "game_state.json").write_text(json.dumps(game_state))
+
+    def prompt(self, instance: TaskInstance) -> str:
+        """Return the starting board prompt for this game."""
+        board = chess.Board()
+        legal_moves = [m.uci() for m in board.legal_moves]
+        color = instance.metadata["color"]
+        return (
+            f"Position (FEN): {board.fen()}\n"
+            f"You are playing {'White' if color == 'white' else 'Black'}.\n"
+            f"Legal moves: {', '.join(legal_moves)}\n\n"
+            f"Board:\n{board}\n\n"
+            "Pick the best move. Output ONLY the UCI move (e.g. e2e4)."
+        )
+
+    def verify(self, instance: TaskInstance, workspace: Path) -> VerifyResult:
+        """Score a completed game from ``game_state.json``.
+
+        Does NOT call ``evaluate_pipeline()``, ``play_game()``, or any
+        game-loop function.  Reads the workspace file only.
+        """
+        workspace = Path(workspace)
+        state_path = workspace / ".factory" / "chess" / "game_state.json"
+        if not state_path.exists():
+            return VerifyResult(
+                passed=False,
+                score=0.0,
+                details={"error": "game_state_not_found"},
+            )
+        state = json.loads(state_path.read_text())
+        result = state.get("result", "loss")
+        eval_curve: list[int] = state.get("eval_curve", [])
+        move_list: list[str] = state.get("move_list", [])
+        color: str = state.get("color", "white")
+        elo: int = state.get("opponent_elo", 0)
+        illegal: int = state.get("illegal_attempts", 0)
+
+        # Extract structured blunders from eval curve (>200cp drops)
+        blunders = _extract_blunders(eval_curve, move_list)
+        avg_cp = (
+            sum(eval_curve) / max(len(eval_curve), 1) if eval_curve else 0.0
+        )
+
+        # Composite score: reuse EvalResult formula
+        threshold = -500
+        position_score = sum(
+            (cp - threshold) / 1000.0
+            for cp in eval_curve
+            if cp >= threshold
+        )
+        outcome_bonus = {"win": 200, "draw": 100}.get(result, 0)
+        composite = position_score + outcome_bonus
+
+        passed = result in ("win", "draw")
+        return VerifyResult(
+            passed=passed,
+            score=composite,
+            details={
+                "result": result,
+                "move_list": move_list,
+                "eval_curve": eval_curve,
+                "blunders": blunders,
+                "illegal_attempts": illegal,
+                "avg_centipawn": avg_cp,
+                "opponent_elo": elo,
+                "color": color,
+                "move_count": len(move_list),
+                "composite_score": composite,
             },
         )

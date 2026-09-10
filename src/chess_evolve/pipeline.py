@@ -26,6 +26,7 @@ from factory.workflow.primitives import (
 )
 
 POSITION_TASK_REF = "chess_evolve.tasks:PositionTask"
+GAME_TASK_REF = "chess_evolve.tasks:GameTask"
 
 KNOB_SPACE: list[tuple[str, list]] = [
     ("max_retries", [1, 2, 3, 5]),
@@ -201,4 +202,79 @@ def build_position_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         nodes={"positions": data_node, "generator": generator},
         edges=[],
         start_node="positions",
+    )
+
+
+def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
+    """Build a DataNode-driven workflow for full-game evaluation.
+
+    A ``DataNode`` (``task_ref=GameTask``) iterates over game configs (ELO ×
+    color). For each game instance, the subgraph runs a ``Loop``: the
+    generator agent picks a move, then ``game_gate`` advances the game state
+    (applies the move, plays Stockfish's response, updates board files).
+    The loop continues until the game is over.  ``GameTask.verify()`` then
+    scores the completed game.
+    """
+    from chess_evolve.config import MAX_MOVES
+
+    if cfg is None:
+        cfg = PipelineConfig()
+
+    # Reuse the generator AgentNode from the base pipeline
+    base_wf = build_pipeline(cfg).compile()
+    generator = base_wf.nodes["generator"].model_copy(deep=True)
+
+    # Game gate: advances game state after each LLM move
+    game_gate = GateNode(
+        id="game_gate",
+        evaluator_type="fn",
+        evaluator_command=(
+            "python3 -c '"
+            "from chess_evolve.engine import advance_game_state; "
+            "advance_game_state(\"{project_path}\")"
+            "'"
+        ),
+    )
+
+    # Subgraph: Loop(generator → game_gate), max MAX_MOVES iterations
+    generator_pkg = Package(
+        name="move-generator",
+        inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
+        outputs=[Port(name="move", artifact_path=".factory/chess/move.md")],
+        graph=Workflow(
+            name="move-gen",
+            nodes={"generator": generator},
+            edges=[],
+            start_node="generator",
+        ),
+        entry_node="generator",
+        exit_node="generator",
+    )
+    game_body = Sequential(generator_pkg, name="generate-move")
+    game_loop = Loop(
+        game_body,
+        game_gate,
+        max_iterations=MAX_MOVES,
+        name="game-loop",
+    )
+
+    # Compile the loop into a flat workflow to extract nodes
+    loop_wf = game_loop.compile()
+
+    # DataNode wraps the compiled loop subgraph
+    data_node = DataNode(
+        id="games",
+        task_ref=GAME_TASK_REF,
+        subgraph_entry=loop_wf.start_node,
+        subgraph_exit="game_gate",
+        parallelism=1,
+        writes={".factory/chess/game_results.json"},
+    )
+
+    all_nodes = {"games": data_node, **loop_wf.nodes}
+    return Workflow(
+        name="game-eval",
+        nodes=all_nodes,
+        edges=loop_wf.edges,
+        start_node="games",
     )

@@ -47,7 +47,11 @@ def main() -> None:
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("run", help="Run the evolution loop")
+    run_parser = sub.add_parser("run", help="Run the evolution loop")
+    run_parser.add_argument(
+        "--task", choices=["position", "game"], default="position",
+        help="Evaluation task: 'position' for static CPL, 'game' for full games",
+    )
 
     serve_parser = sub.add_parser("serve", help="Start the live web UI")
     serve_parser.add_argument("--port", type=int, default=8422)
@@ -81,7 +85,7 @@ def main() -> None:
         )
         try:
             from chess_evolve.evolution import main as evolve_main
-            evolve_main()
+            evolve_main(task_type=args.task)
         except BaseException as exc:
             mb = resource.getrusage(
                 resource.RUSAGE_SELF,
