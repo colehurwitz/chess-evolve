@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import factory.agents.runner as _runner
 from factory.workflow.executor import WorkflowExecutor
 
 from chess_evolve.config import WORKSPACE
@@ -14,30 +15,39 @@ from chess_evolve.pipeline import PipelineConfig, build_position_eval_workflow
 
 DATA_NODE_ID = "positions"
 
+# The factory-shipped invoke_agent captured at import time. When
+# ``_runner.invoke_agent`` still points here, no one (e.g. a test monkeypatch)
+# has overridden it, so we route move generation through the live SDK. If it has
+# been replaced, we delegate to that replacement instead — which keeps the
+# hermetic tests genuinely offline (they stub ``invoke_agent``).
+_FACTORY_DEFAULT_INVOKE = _runner.invoke_agent
 
-async def _position_move_invoke(
-    role: str,
-    task: str,
-    project_path: Path,
-    model: str | None = None,
-    timeout: float = 25.0,
-    **kwargs: object,
-) -> tuple[str, int]:
-    """invoke_agent shim for position eval that also persists the move.
+
+def _make_move_invoke(inner):
+    """Wrap ``inner`` invoke_agent so it also persists the generated move.
 
     The stock WorkflowExecutor keeps AgentNode output only in memory; the
     PositionTask.verify hook reads ``.factory/chess/move.md`` from disk, so this
-    wrapper writes the generated move there after invoking the model.
+    wrapper writes the generated move there after invoking ``inner``.
     """
-    from chess_evolve.engine import _sdk_invoke_agent
 
-    text, code = await _sdk_invoke_agent(
-        role, task, project_path, model=model, timeout=timeout, **kwargs,
-    )
-    move_file = Path(project_path) / ".factory" / "chess" / "move.md"
-    move_file.parent.mkdir(parents=True, exist_ok=True)
-    move_file.write_text(text or "")
-    return text, code
+    async def _position_move_invoke(
+        role: str,
+        task: str,
+        project_path: Path,
+        model: str | None = None,
+        timeout: float = 25.0,
+        **kwargs: object,
+    ) -> tuple[str, int]:
+        text, code = await inner(
+            role, task, project_path, model=model, timeout=timeout, **kwargs,
+        )
+        move_file = Path(project_path) / ".factory" / "chess" / "move.md"
+        move_file.parent.mkdir(parents=True, exist_ok=True)
+        move_file.write_text(text or "")
+        return text, code
+
+    return _position_move_invoke
 
 
 def _prime_workspace(workspace: Path) -> None:
@@ -125,10 +135,17 @@ async def run_position_eval(
 
     # The stock executor keeps AgentNode output in memory only; swap invoke_agent
     # for a shim that also writes .factory/chess/move.md so verify() can read it.
-    import factory.agents.runner as _runner
-
+    # Delegate to whatever invoke_agent is currently installed so a test-provided
+    # stub survives (hermetic tests); only reach for the live SDK when nothing
+    # has overridden the factory default.
     _orig_invoke = _runner.invoke_agent
-    _runner.invoke_agent = _position_move_invoke  # type: ignore[assignment]
+    if _orig_invoke is _FACTORY_DEFAULT_INVOKE:
+        from chess_evolve.engine import _sdk_invoke_agent
+
+        inner = _sdk_invoke_agent
+    else:
+        inner = _orig_invoke
+    _runner.invoke_agent = _make_move_invoke(inner)  # type: ignore[assignment]
     try:
         executor = WorkflowExecutor(
             workflow=wf, project_path=workspace, auto_approve=True,
