@@ -8,7 +8,6 @@ import logging
 import os
 import resource
 import signal
-import subprocess
 import sys
 import traceback
 
@@ -49,9 +48,17 @@ def main() -> None:
 
     sub.add_parser("run", help="Run the evolution loop")
 
-    serve_parser = sub.add_parser("serve", help="Start the live web UI")
+    serve_parser = sub.add_parser("serve", help="Start the live dashboard")
     serve_parser.add_argument("--port", type=int, default=8422)
     serve_parser.add_argument("--host", type=str, default="0.0.0.0")
+    serve_parser.add_argument(
+        "--project", type=str, default=None,
+        help="Project root directory (default: current directory)",
+    )
+    serve_parser.add_argument(
+        "--replay", type=str, default=None,
+        help="Replay a JSONL file instead of live tailing",
+    )
 
     eval_parser = sub.add_parser(
         "eval-positions",
@@ -94,10 +101,31 @@ def main() -> None:
             traceback.print_exc(file=sys.stderr)
             raise
     elif args.command == "serve":
-        subprocess.run(
-            [sys.executable, "-m", "uvicorn", "chess_evolve.serve:app",
-             "--host", args.host, "--port", str(args.port),
-             "--log-level", "warning"],
+        try:
+            import uvicorn  # noqa: F401
+
+            from chess_evolve.dashboard import create_app
+        except ImportError:
+            print(
+                "Dashboard dependencies not installed. Run:\n"
+                "  pip install 'chess-evolve[dashboard]'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        from pathlib import Path
+
+        project_root = Path(args.project) if args.project else Path.cwd()
+        replay_path = Path(args.replay) if args.replay else None
+        app = create_app(
+            project_root=project_root,
+            replay_path=replay_path,
+        )
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="warning",
         )
     elif args.command == "eval-positions":
         from chess_evolve.position_eval import run_position_eval
