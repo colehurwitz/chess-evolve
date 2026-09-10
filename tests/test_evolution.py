@@ -1,11 +1,10 @@
-"""Tests for the evolution loop utilities."""
+"""Tests for the evolution module."""
 
 from __future__ import annotations
 
-import random
+import inspect
 
-from chess_evolve.evolution import mutate_knobs
-from chess_evolve.pipeline import KNOB_SPACE, PipelineConfig, build_pipeline
+from chess_evolve.pipeline import PipelineConfig, build_pipeline
 
 
 class TestBuildAndCompile:
@@ -20,36 +19,30 @@ class TestBuildAndCompile:
         assert wf1.knob_values != wf2.knob_values
 
 
-class TestMutateKnobs:
-    def test_changes_exactly_one_field(self, default_config):
-        rng = random.Random(42)
-        new_cfg, desc = mutate_knobs(default_config, rng)
-        diffs = 0
-        for knob_name, _ in KNOB_SPACE:
-            if getattr(new_cfg, knob_name) != getattr(default_config, knob_name):
-                diffs += 1
-        assert diffs == 1 or desc == "no-op"
+class TestSwarmEngineWiring:
+    def test_main_is_sync(self):
+        from chess_evolve.evolution import main
 
-    def test_returns_description(self, default_config):
-        rng = random.Random(42)
-        _, desc = mutate_knobs(default_config, rng)
-        assert isinstance(desc, str)
-        assert len(desc) > 0
+        assert not inspect.iscoroutinefunction(main)
 
-    def test_new_value_in_bounds(self, default_config):
-        rng = random.Random(42)
-        new_cfg, desc = mutate_knobs(default_config, rng)
-        if desc != "no-op":
-            knob_name = desc.split("=")[0]
-            new_val = getattr(new_cfg, knob_name)
-            choices = [
-                c for _, (name, c) in enumerate(KNOB_SPACE) if name == knob_name
-            ][0]
-            assert new_val in choices
+    def test_main_accepts_project_dir(self):
+        from chess_evolve.evolution import main
 
-    def test_deterministic_with_seed(self, default_config):
-        rng1 = random.Random(123)
-        rng2 = random.Random(123)
-        cfg1, desc1 = mutate_knobs(default_config, rng1)
-        cfg2, desc2 = mutate_knobs(default_config, rng2)
-        assert desc1 == desc2
+        sig = inspect.signature(main)
+        assert "project_dir" in sig.parameters
+
+    def test_swarm_config_has_frozen_positions(self):
+        from factory.outer_loop import SwarmConfig
+
+        config = SwarmConfig(
+            benchmark="chess-evolve",
+            budget=100,
+            population_size=4,
+            tournament_size=3,
+            frozen_node_ids=["positions"],
+            task_module="chess_evolve.tasks:PositionTask",
+        )
+        assert "positions" in config.frozen_node_ids
+
+    def test_evolution_imports_cleanly(self):
+        from chess_evolve.evolution import main  # noqa: F401

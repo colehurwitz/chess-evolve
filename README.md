@@ -101,21 +101,23 @@ OptKnob(name="verify_style", kind="prompt", node_id="verifier",
 ```
 Your version: declare knobs for your domain's tunable parameters.
 
-**[`evolution.py`](src/chess_evolve/evolution.py)** runs the outer loop using factory's components:
+**[`evolution.py`](src/chess_evolve/evolution.py)** runs the outer loop as a thin `SwarmEngine` consumer:
 ```python
-archive = MAPElitesArchive()
-reflector = OuterLoopReflector(k=3)
-strategy = WeightedRandomStrategy(weights={...})
+task = PositionTask()
+workflow = build_position_eval_workflow()
 
-for gen in range(N):
-    report = reflector.reflect(records)
-    parent = archive.sample_parent(tournament_size=5, rank_weighted=True)
-    child_wf, rec = apply_random_mutation(parent_wf, strategy, gen,
-                                          reflection_report=report)
-    score = await evaluate(child_wf)
-    archive.add(individual)
+config = SwarmConfig(
+    benchmark="chess-evolve",
+    budget=100,
+    frozen_node_ids=["positions"],
+)
+config.set_task(task)
+
+evaluator = SwarmEvaluator(config, inner_loop_factory=True, project_dir=project_dir)
+engine = SwarmEngine(config, evaluator, project_dir=project_dir)
+result = engine.run(workflow, project_dir=str(project_dir))
 ```
-Your version: same loop, just change `evaluate()` to score your domain.
+Your version: define a `Task`, build a workflow, and hand both to `SwarmEngine`. The engine handles mutation, selection, diversity preservation, and reflection internally.
 
 Factory's `compute_features()` automatically extracts MAP-Elites feature dimensions from the compiled workflow (knob values, prompt content, edge structure, params). No custom feature function needed.
 
@@ -175,7 +177,7 @@ The outer loop needs structured feedback to learn. Here's how chess-evolve conne
 
 **Build a `CycleRecord`** from your evaluation results ([`game.py:to_cycle_record()`](src/chess_evolve/game.py)). Include domain-specific context in the `ExperimentRecord.hypothesis` field -- this is what the reflector reads during contrastive analysis. Chess-evolve includes move history, eval curve, blunder locations, selector reasoning, and verifier output.
 
-**Pass prompt mutations to the reflector** via `knob_values_by_id` ([`evolution.py`](src/chess_evolve/evolution.py)). The reflector only sees knob values by default; prompt mutations live on the workflow IR and are invisible unless you explicitly include `_prompt_<node>` entries.
+**Prompt mutations are handled automatically** by `SwarmEngine`. The engine's internal reflector sees both knob values and `_prompt_<node>` entries on the workflow IR — no manual wiring needed in your consumer code.
 
 **Separate format from strategy in prompts.** If your pipeline has agents with strict output format requirements (e.g., "respond with exactly one UCI move"), put the format constraint in the system prompt (`_sdk_invoke_agent`), not the `prompt_template`. The `PROMPT_MUTATE` operator rewrites `prompt_template` -- if format rules are mixed in, the rewriter can break the output contract.
 

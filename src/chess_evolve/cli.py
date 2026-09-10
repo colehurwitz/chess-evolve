@@ -81,7 +81,7 @@ def main() -> None:
         )
         try:
             from chess_evolve.evolution import main as evolve_main
-            asyncio.run(evolve_main())
+            evolve_main()
         except BaseException as exc:
             mb = resource.getrusage(
                 resource.RUSAGE_SELF,
