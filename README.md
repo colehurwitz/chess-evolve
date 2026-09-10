@@ -35,6 +35,46 @@ chess-evolve serve
 # Open http://localhost:8422
 ```
 
+## Evaluating move quality (`eval-positions`)
+
+Score the move generator on a fixed set of positions instead of playing full
+games. This runs a DataNode-driven batch evaluation over a list of FEN
+positions: for each position the LLM picks a move, and it is scored by
+**centipawn loss** — how much worse its move is than Stockfish's best move at
+the same position.
+
+```bash
+uv run chess-evolve eval-positions \
+    [--positions eval/test_positions.json] \
+    [--depth N] \
+    [--time SECONDS]
+```
+
+- `--positions` — path to the positions JSON file (default `eval/test_positions.json`).
+- `--depth N` — Stockfish analysis depth (default 12 when neither `--depth` nor `--time` is set).
+- `--time SECONDS` — Stockfish analysis time per position, in seconds. If set, it takes precedence over `--depth`.
+
+The command prints one line per position (chosen move, Stockfish's best move,
+centipawn loss, score, pass/fail) followed by a summary with **mean centipawn
+loss**, **mean score**, and **pass rate**. It also writes the full aggregate to
+`.factory/chess/eval_results.json` in the workspace.
+
+Stockfish is located via the `STOCKFISH_PATH` environment variable; if unset it
+falls back to a `PATH` lookup (`stockfish`) and then a few common install
+locations. Live runs require Stockfish plus an LLM backend for move generation.
+
+Sample output:
+
+```
+$ uv run chess-evolve eval-positions --depth 12
+pos-001: move=e2e4 best=e2e4 cpl=0 score=1.000 pass=True
+pos-002: move=g1f3 best=d2d4 cpl=35 score=0.650 pass=True
+pos-003: move=f1c4 best=e1g1 cpl=120 score=0.000 pass=False
+
+mean_cpl=51.7 mean_score=0.550 pass_rate=0.67 (2/3)
+results written to /tmp/chess-factory/position-eval/.factory/chess/eval_results.json
+```
+
 ## Adapting this to your domain
 
 This demo has two layers: **factory integration** (reusable pattern) and **chess logic** (domain-specific). If you're building something similar for a different domain, here's what to keep, what to replace, and what to study.
@@ -161,4 +201,5 @@ Factory handles mutation, selection, diversity preservation, and reflection auto
 |---|---|---|
 | `CHESS_MODEL` | `opus` | Model for the `claude` CLI (move generation uses Vertex Haiku) |
 | `CHESS_WORKSPACE` | `/tmp/chess-factory` | Working directory for game data |
+| `STOCKFISH_PATH` | (auto) | Path to the Stockfish binary; falls back to `PATH` lookup then common install locations |
 
