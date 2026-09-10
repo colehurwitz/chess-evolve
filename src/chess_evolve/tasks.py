@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Iterator
 
@@ -19,7 +20,35 @@ import chess.engine
 from factory.task import Task, TaskInstance, VerifyResult
 
 from chess_evolve.config import resolve_stockfish
-from chess_evolve.engine import read_move, write_board_state
+
+
+def write_board_state(workspace: Path, board: chess.Board) -> None:
+    """Write the current board state as an artifact for the pipeline to read."""
+    legal_moves = [move.uci() for move in board.legal_moves]
+    content = (
+        f"FEN: {board.fen()}\n\n"
+        f"You are playing {'White' if board.turn else 'Black'}.\n\n"
+        f"Legal moves: {', '.join(legal_moves)}\n\n"
+        f"Board:\n{board}\n"
+    )
+    (workspace / ".factory" / "chess" / "board_state.md").write_text(content)
+
+
+def read_move(workspace: Path, board: chess.Board) -> str | None:
+    """Read the move chosen by the pipeline from the artifact file."""
+    move_file = workspace / ".factory" / "chess" / "move.md"
+    if not move_file.exists():
+        return None
+    content = move_file.read_text().strip()
+    legal_moves = [m.uci() for m in board.legal_moves]
+    for token in content.split():
+        cleaned = token.strip(".,!()[]{}\"'`\n")
+        if cleaned in legal_moves:
+            return cleaned
+    for match in re.finditer(r'[a-h][1-8][a-h][1-8][qrbn]?', content):
+        if match.group() in legal_moves:
+            return match.group()
+    return None
 
 # Scores at/above this magnitude are treated as "mate-scale" (checkmate found).
 _MATE_SCALE = 9000

@@ -33,15 +33,3 @@ def resolve_stockfish() -> str | None:
         if Path(candidate).exists():
             return candidate
     return None
-
-
-# Best-effort resolved path; falls back to the bare command name so that
-# environments with Stockfish on PATH still work via SimpleEngine.popen_uci.
-STOCKFISH_PATH = resolve_stockfish() or "stockfish"
-ELO_OPTIONS = [1320, 1420, 1520, 1620]
-GAMES_PER_EVAL = 1
-MAX_MOVES = 60
-NUM_GENERATIONS = 6
-CANDIDATES_PER_GEN = 5
-WORKSPACE = Path(os.environ.get("CHESS_WORKSPACE", "/tmp/chess-factory"))
-LIVE_DIR = WORKSPACE / "live"
