@@ -25,13 +25,16 @@ The outer loop evolves this pipeline using factory's MAP-Elites quality-diversit
 
 ```bash
 uv sync
+uv pip install -e '.[dashboard]'  # optional: for the live dashboard
 brew install stockfish  # macOS (or apt install stockfish)
 
 # Run the evolution loop
 chess-evolve run
 
-# In another terminal, start the live UI
+# In another terminal, start the live dashboard
 chess-evolve serve
+chess-evolve serve --replay path/to/events.jsonl  # replay a completed run
+chess-evolve serve --project /path/to/project     # monitor a different project
 # Open http://localhost:8422
 ```
 
