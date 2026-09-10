@@ -17,7 +17,15 @@ from factory.workflow.package import (
     Sequential,
     StateContract,
 )
-from factory.workflow.primitives import AgentNode, AgentRole, GateNode, Workflow
+from factory.workflow.primitives import (
+    AgentNode,
+    AgentRole,
+    DataNode,
+    GateNode,
+    Workflow,
+)
+
+POSITION_TASK_REF = "chess_evolve.tasks:PositionTask"
 
 KNOB_SPACE: list[tuple[str, list]] = [
     ("max_retries", [1, 2, 3, 5]),
@@ -157,3 +165,40 @@ def build_pipeline(cfg: PipelineConfig | None = None) -> Package:
 
     move_loop.knobs = knobs
     return move_loop
+
+
+def build_position_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
+    """Build a DataNode-driven workflow that evaluates positions per-item.
+
+    A ``DataNode`` (``task_ref='chess_evolve.tasks:PositionTask'``) resolves one
+    instance per position and runs the existing move-generator ``AgentNode`` as
+    its subgraph — the generator executes once per position. Per-position
+    verification (centipawn loss) is performed by ``PositionTask.verify``.
+
+    ``parallelism=1`` serializes items because every instance shares the same
+    ``project_path`` (the executor passes it to ``setup``/``verify`` and to each
+    sub-executor); serializing prevents ``board_state.md`` / ``move.md`` from
+    racing across positions.
+    """
+    if cfg is None:
+        cfg = PipelineConfig()
+
+    # Reuse the exact generator AgentNode produced by build_pipeline().
+    base_wf = build_pipeline(cfg).compile()
+    generator = base_wf.nodes["generator"].model_copy(deep=True)
+
+    data_node = DataNode(
+        id="positions",
+        task_ref=POSITION_TASK_REF,
+        subgraph_entry="generator",
+        subgraph_exit="generator",
+        parallelism=1,
+        writes={".factory/chess/eval_results.json"},
+    )
+
+    return Workflow(
+        name="position-eval",
+        nodes={"positions": data_node, "generator": generator},
+        edges=[],
+        start_node="positions",
+    )
