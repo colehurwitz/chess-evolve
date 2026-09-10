@@ -241,6 +241,29 @@ async def _call_llm(
         return await _api_call(system_prompt, user_msg, max_tokens)
 
 
+async def _position_move_invoke(
+    role: str,
+    task: str,
+    project_path: Path,
+    model: str | None = None,
+    timeout: float = 25.0,
+    **kwargs: object,
+) -> tuple[str, int]:
+    """invoke_agent shim for position eval that also persists the move.
+
+    The stock WorkflowExecutor keeps AgentNode output only in memory; the
+    PositionTask.verify hook reads ``.factory/chess/move.md`` from disk, so this
+    wrapper writes the generated move there after invoking the model.
+    """
+    text, code = await _sdk_invoke_agent(
+        role, task, project_path, model=model, timeout=timeout, **kwargs,
+    )
+    move_file = Path(project_path) / ".factory" / "chess" / "move.md"
+    move_file.parent.mkdir(parents=True, exist_ok=True)
+    move_file.write_text(text or "")
+    return text, code
+
+
 def setup_workspace(workspace: Path) -> None:
     """Create the workspace with .factory/chess/ directory."""
     if workspace.exists():

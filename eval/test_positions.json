@@ -1,0 +1,32 @@
+[
+  {
+    "id": "opening-e4-reply",
+    "phase": "opening",
+    "description": "Black to move after 1.e4 — standard opening reply.",
+    "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+  },
+  {
+    "id": "opening-italian",
+    "phase": "opening",
+    "description": "White to move in an Italian-style opening.",
+    "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+  },
+  {
+    "id": "middlegame-develop",
+    "phase": "middlegame",
+    "description": "White to move with pieces developing in the center.",
+    "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
+  },
+  {
+    "id": "tactic-rook-endgame",
+    "phase": "tactic",
+    "description": "White to move in a rook endgame — activity matters.",
+    "fen": "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
+  },
+  {
+    "id": "endgame-kp-vs-k",
+    "phase": "endgame",
+    "description": "King and pawn versus king — precise technique required.",
+    "fen": "8/8/8/4k3/8/4K3/4P3/8 w - - 0 1"
+  }
+]
