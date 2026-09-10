@@ -13,7 +13,14 @@ dependencies = [
 chess-evolve = "chess_evolve.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-timeout", "ruff"]
+dashboard = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "sse-starlette>=1.6.5",
+    "watchfiles>=0.20.0",
+    "jinja2>=3.1.0",
+]
+dev = ["pytest", "pytest-timeout", "pytest-asyncio", "httpx", "ruff"]
 
 [build-system]
 requires = ["hatchling"]
@@ -31,3 +38,5 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/chess_evolve/dashboard/app.py" = ["E501"]
