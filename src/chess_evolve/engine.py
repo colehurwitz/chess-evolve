@@ -61,15 +61,19 @@ async def _cli_call(
     env = _clean_env()
     for attempt in range(3):
         try:
-            proc = await asyncio.create_subprocess_exec(
+            cmd = [
                 "claude", "-p", user_msg,
                 "--model", CHESS_MODEL,
                 "--append-system-prompt", system_prompt,
                 "--max-turns", "2",
                 "--output-format", "text",
-                "--bare",
                 "--allowedTools", "",
                 "--effort", "low",
+            ]
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                cmd.append("--bare")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -134,14 +138,18 @@ async def _cli_call_opus(
     env = _clean_env()
     for attempt in range(3):
         try:
-            proc = await asyncio.create_subprocess_exec(
+            cmd = [
                 "claude", "-p", user_msg,
                 "--model", "opus",
                 "--append-system-prompt", system_prompt,
                 "--max-turns", "1",
                 "--output-format", "text",
-                "--bare",
                 "--allowedTools", "",
+            ]
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                cmd.append("--bare")
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,

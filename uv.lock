@@ -593,7 +593,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-timeout", marker = "extra == 'dev'" },
     { name = "python-chess" },
-    { name = "remote-factory", git = "https://github.com/akashgit/remote-factory.git?rev=main" },
+    { name = "remote-factory", git = "https://github.com/akashgit/remote-factory.git?rev=factory%2Frun-c5fc48a8" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sse-starlette" },
     { name = "uvicorn" },
@@ -1055,8 +1055,8 @@ name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11" },
-    { name = "truststore" },
+    { name = "h11", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
@@ -2855,8 +2855,8 @@ wheels = [
 
 [[package]]
 name = "remote-factory"
-version = "0.3.1.dev224+gf92a8bd"
-source = { git = "https://github.com/akashgit/remote-factory.git?rev=main#f92a8bd3b4e7b85efb29a0964b393a26387073f9" }
+version = "0.3.1.dev245+g4691183"
+source = { git = "https://github.com/akashgit/remote-factory.git?rev=factory%2Frun-c5fc48a8#46911832408527a28c2d59c7686bcc6850012270" }
 dependencies = [
     { name = "anthropic", extra = ["vertex"] },
     { name = "fastapi" },
