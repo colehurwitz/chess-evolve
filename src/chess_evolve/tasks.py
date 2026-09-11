@@ -132,9 +132,11 @@ class PositionTask(Task):
         the ``.factory/chess`` directory and writes ``board_state.md``.
         """
         workspace = Path(workspace)
-        (workspace / ".factory" / "chess").mkdir(parents=True, exist_ok=True)
+        chess_dir = workspace / ".factory" / "chess"
+        chess_dir.mkdir(parents=True, exist_ok=True)
         board = chess.Board(instance.metadata["fen"])
         write_board_state(workspace, board)
+        (chess_dir / "memory.md").write_text("")
 
     def prompt(self, instance: TaskInstance) -> str:
         """Return the board prompt text for this position."""
