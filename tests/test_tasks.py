@@ -98,6 +98,13 @@ class TestSetup:
         normalized = chess.Board(inst.metadata["fen"]).fen()
         assert normalized in board_file.read_text()
 
+    def test_setup_creates_memory_file(self, tmp_path):
+        """Regression: setup() must create memory.md for DataNode reads."""
+        inst = next(iter(PositionTask().instances()))
+        PositionTask().setup(inst, tmp_path)
+        memory = tmp_path / ".factory" / "chess" / "memory.md"
+        assert memory.exists()
+
     def test_setup_does_not_wipe_workspace(self, tmp_path):
         # A pre-existing sibling file must survive setup (no rmtree).
         keep = tmp_path / "keep.txt"
