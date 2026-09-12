@@ -14,17 +14,23 @@ from chess_evolve.tasks import PositionTask
 
 
 class ChessDesignerAgent(DesignerAgent):
-    """Custom designer that adds proper prompt template to builder node."""
+    """Custom designer that adds proper prompt template and reads to builder node."""
 
     def design_minimal(self, benchmark_spec, seed_workflow=None, frozen_node_ids=None):
-        """Create minimal workflow with chess-specific builder prompt."""
+        """Create minimal workflow with chess-specific builder prompt and configuration."""
         wf = super().design_minimal(benchmark_spec)
 
-        # Patch the builder node to include the proper prompt template
+        # Patch the builder node to include the proper prompt template and reads
         if "builder" in wf.nodes:
             builder = wf.nodes["builder"]
             if isinstance(builder, AgentNode):
                 builder.prompt_template = BUILDER_PROMPT
+                # Ensure builder reads the researcher's output
+                builder.reads = {
+                    ".factory/chess/board_state.md",
+                    ".factory/strategy/research.md",
+                    ".factory/chess/memory.md",
+                }
 
         return wf
 
