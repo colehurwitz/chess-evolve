@@ -465,20 +465,21 @@ class TestBuildGameEvalWorkflow:
         assert isinstance(data_node, DataNode)
         assert data_node.task_ref == GAME_TASK_REF
 
-    def test_has_generator(self) -> None:
+    def test_has_researcher_and_builder(self) -> None:
         from factory.workflow.primitives import AgentNode
 
         from chess_evolve.pipeline import build_game_eval_workflow
 
         wf = build_game_eval_workflow()
-        # The generator should be somewhere in the compiled nodes
-        gen_nodes = [
+        # The researcher and builder should be in the compiled nodes
+        agent_nodes = [
             nid for nid, n in wf.nodes.items()
-            if isinstance(n, AgentNode) and "generator" in nid
+            if isinstance(n, AgentNode)
         ]
-        assert len(gen_nodes) >= 1
+        assert any("researcher" in nid for nid in agent_nodes)
+        assert any("builder" in nid for nid in agent_nodes)
 
-    def test_has_game_gate(self) -> None:
+    def test_has_gate_qa(self) -> None:
         from factory.workflow.primitives import GateNode
 
         from chess_evolve.pipeline import build_game_eval_workflow
@@ -486,7 +487,7 @@ class TestBuildGameEvalWorkflow:
         wf = build_game_eval_workflow()
         gate_nodes = [
             nid for nid, n in wf.nodes.items()
-            if isinstance(n, GateNode) and "game_gate" in nid
+            if isinstance(n, GateNode) and "gate_qa" in nid
         ]
         assert len(gate_nodes) >= 1
 
