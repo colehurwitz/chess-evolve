@@ -11,16 +11,21 @@ import signal
 import sys
 import traceback
 
+import structlog
+
+from chess_evolve.logging_config import setup_logging
+
+_crash_log = structlog.get_logger("crash")
+
 
 def _setup_crash_reporting() -> None:
-    """Log memory, signals, and unhandled exceptions to stderr."""
+    """Log memory, signals, and unhandled exceptions via structlog."""
     def _signal_handler(signum, frame):
         sig_name = signal.Signals(signum).name
         mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // (1024 * 1024)
-        print(
-            f"\n[CRASH] Signal {sig_name} ({signum}) received. "
-            f"Peak memory: {mb}MB. PID: {os.getpid()}",
-            file=sys.stderr, flush=True,
+        _crash_log.critical(
+            "signal_received", signal=sig_name, signum=signum,
+            peak_memory_mb=mb, pid=os.getpid(),
         )
         traceback.print_stack(frame, file=sys.stderr)
         sys.exit(128 + signum)
@@ -30,10 +35,9 @@ def _setup_crash_reporting() -> None:
 
     def _exception_hook(exc_type, exc_value, exc_tb):
         mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // (1024 * 1024)
-        print(
-            f"\n[CRASH] Unhandled {exc_type.__name__}: {exc_value}. "
-            f"Peak memory: {mb}MB",
-            file=sys.stderr, flush=True,
+        _crash_log.critical(
+            "unhandled_exception", exc_type=exc_type.__name__,
+            exc_value=str(exc_value), peak_memory_mb=mb,
         )
         traceback.print_exception(exc_type, exc_value, exc_tb, file=sys.stderr)
 
@@ -41,6 +45,8 @@ def _setup_crash_reporting() -> None:
 
 
 def main() -> None:
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Chess prompt evolution via remote-factory",
     )
@@ -80,6 +86,10 @@ def main() -> None:
         "--time", type=float, default=None, dest="time_limit",
         help="Stockfish analysis time per position in seconds",
     )
+    eval_parser.add_argument(
+        "--dry-run", action="store_true", default=False,
+        help="Skip LLM calls; verify positions without generating moves",
+    )
 
     args = parser.parse_args()
 
@@ -97,10 +107,9 @@ def main() -> None:
             mb = resource.getrusage(
                 resource.RUSAGE_SELF,
             ).ru_maxrss // (1024 * 1024)
-            print(
-                f"\n[CRASH] {type(exc).__name__}: {exc}. "
-                f"Peak memory: {mb}MB",
-                file=sys.stderr, flush=True,
+            _crash_log.critical(
+                "evolution_crashed", exc_type=type(exc).__name__,
+                exc_value=str(exc), peak_memory_mb=mb,
             )
             traceback.print_exc(file=sys.stderr)
             raise
@@ -138,6 +147,7 @@ def main() -> None:
             positions_file=args.positions,
             depth=args.depth,
             time_limit=args.time_limit,
+            dry_run=args.dry_run,
         ))
         for item in aggregate["per_instance"]:
             cpl = item.get("cpl")

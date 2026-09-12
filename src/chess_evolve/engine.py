@@ -12,12 +12,15 @@ from pathlib import Path
 
 import chess
 import chess.engine
+import structlog
 from factory.workflow.executor import WorkflowExecutor
 from factory.workflow.package import Package
 
 from chess_evolve.broadcast import broadcast_game_state
 from chess_evolve.config import MAX_MOVES, resolve_stockfish
 from chess_evolve.pipeline import PipelineConfig
+
+log = structlog.get_logger()
 
 _client = None
 _api_semaphore = asyncio.Semaphore(2)
@@ -61,7 +64,6 @@ async def _cli_call(
     system_prompt: str, user_msg: str, max_tokens: int = 200,
 ) -> str:
     """Call LLM via claude CLI with retry."""
-    import sys
     env = _clean_env()
     for attempt in range(3):
         try:
@@ -88,24 +90,15 @@ async def _cli_call(
             )
             result = stdout.decode().strip()
             if "max turns" in result.lower() or "reached max" in result.lower():
-                print(
-                    f"  [CLI] HIT MAX TURNS (attempt {attempt+1})",
-                    file=sys.stderr, flush=True,
-                )
+                log.warning("cli_max_turns", attempt=attempt + 1)
                 await asyncio.sleep(2)
                 continue
             if result:
                 return result
-            print(
-                f"  [CLI] empty (attempt {attempt+1})",
-                file=sys.stderr, flush=True,
-            )
+            log.warning("cli_empty_response", attempt=attempt + 1)
             await asyncio.sleep(2)
         except asyncio.TimeoutError:
-            print(
-                f"  [CLI] timeout (attempt {attempt+1})",
-                file=sys.stderr, flush=True,
-            )
+            log.warning("cli_timeout", attempt=attempt + 1)
             try:
                 proc.kill()  # type: ignore[possibly-undefined]
             except Exception:
@@ -138,7 +131,6 @@ async def _cli_call_opus(
     system_prompt: str, user_msg: str, max_tokens: int = 500,
 ) -> str:
     """Call Opus via claude CLI with retry."""
-    import sys
     env = _clean_env()
     for attempt in range(3):
         try:
@@ -165,38 +157,27 @@ async def _cli_call_opus(
             result = stdout.decode().strip()
             err = stderr.decode().strip()
             if err:
-                print(
-                    f"  [OPUS] stderr (attempt {attempt+1}): {err[:200]}",
-                    file=sys.stderr, flush=True,
-                )
+                log.debug("opus_stderr", attempt=attempt + 1, stderr=err[:200])
             if "max turns" in result.lower() or "reached max" in result.lower():
-                print(
-                    f"  [OPUS] HIT MAX TURNS (attempt {attempt+1}): "
-                    f"stdout={result[:150]!r} returncode={proc.returncode}",
-                    file=sys.stderr, flush=True,
+                log.warning(
+                    "opus_max_turns", attempt=attempt + 1,
+                    stdout=result[:150], returncode=proc.returncode,
                 )
                 continue
             if result:
                 return result
-            print(
-                f"  [OPUS] empty response (attempt {attempt+1})"
-                f" returncode={proc.returncode}",
-                file=sys.stderr, flush=True,
+            log.warning(
+                "opus_empty_response", attempt=attempt + 1,
+                returncode=proc.returncode,
             )
         except asyncio.TimeoutError:
-            print(
-                f"  [OPUS] timeout (attempt {attempt+1})",
-                file=sys.stderr, flush=True,
-            )
+            log.warning("opus_timeout", attempt=attempt + 1)
             try:
                 proc.kill()
             except Exception:
                 pass
         except Exception as exc:
-            print(
-                f"  [OPUS] error: {exc} (attempt {attempt+1})",
-                file=sys.stderr, flush=True,
-            )
+            log.warning("opus_error", attempt=attempt + 1, error=str(exc))
     return ""
 
 
@@ -475,12 +456,10 @@ async def get_pipeline_move(
     finally:
         _runner.invoke_agent = _orig_invoke  # type: ignore[assignment]
 
-    import sys
     move_tag = game_tag or "?"
-    print(
-        f"  [{move_tag}] EXEC outputs={list(result.node_outputs.keys())}"
-        f" halted={result.halted}",
-        file=sys.stderr, flush=True,
+    log.info(
+        "pipeline_exec_complete", game_tag=move_tag,
+        outputs=list(result.node_outputs.keys()), halted=result.halted,
     )
     for nid, output in result.node_outputs.items():
         node = wf.nodes.get(nid)
@@ -489,9 +468,9 @@ async def get_pipeline_move(
                 fpath = workspace / wpath
                 fpath.parent.mkdir(parents=True, exist_ok=True)
                 fpath.write_text(output)
-                print(
-                    f"  [{move_tag}] WRITE {wpath} ({len(output)} chars)",
-                    file=sys.stderr, flush=True,
+                log.debug(
+                    "pipeline_write", game_tag=move_tag,
+                    node_id=nid, path=wpath, chars=len(output),
                 )
 
     # Find the move from whichever node writes move.md
@@ -508,9 +487,9 @@ async def get_pipeline_move(
         if move:
             move_source = "pipeline"
         else:
-            print(
-                f"  [{move_tag}] PARSE_FAIL {move_node}={output[:80]!r}",
-                file=sys.stderr, flush=True,
+            log.warning(
+                "pipeline_parse_fail", game_tag=move_tag,
+                node_id=move_node, output=output[:80],
             )
     # Fallback: try every node output for a legal move
     if move is None:

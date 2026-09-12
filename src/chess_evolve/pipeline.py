@@ -17,6 +17,8 @@ class PipelineConfig:
     """Minimal config for pipeline construction."""
     opponent_elo: int = 1500
     max_retries: int = 3
+    board_representation: str = "fen"
+    use_game_context: bool = True
 
 POSITION_TASK_REF = "chess_evolve.tasks:PositionTask"
 GAME_TASK_REF = "chess_evolve.tasks:GameTask"
