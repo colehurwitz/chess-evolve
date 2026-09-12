@@ -6,10 +6,11 @@ chess positions via SwarmEngine.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from factory.workflow.package import Loop, Package, Port, Sequential
-from factory.workflow.primitives import AgentNode, AgentRole, DataNode, GateNode, Workflow
+from factory.workflow.primitives import AgentNode, AgentRole, DataNode, Edge, GateNode, Workflow
 
 
 @dataclass
@@ -24,6 +25,18 @@ GAME_TASK_REF = "chess_evolve.tasks:GameTask"
 GENERATOR_PROMPT = (
     "You are playing chess. Look at the board position and legal moves. "
     "Pick a move. Output ONLY the UCI move (e.g. e2e4). Nothing else."
+)
+
+RESEARCHER_PROMPT = (
+    "You are a chess analyst. Study the board position, evaluate candidate moves, "
+    "and recommend the best move. Explain your reasoning briefly, then state "
+    "your recommended move in UCI format (e.g. e2e4) on the last line."
+)
+
+BUILDER_PROMPT = (
+    "You are a chess move selector. Read the board position and the analyst's "
+    "recommendation. Pick the best legal move.\n\n"
+    "Output ONLY the UCI move (e.g. e2e4). Nothing else."
 )
 
 
@@ -69,12 +82,12 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
 
     Build a DataNode-driven workflow for full-game evaluation.
 
-    A ``DataNode`` (``task_ref=GameTask``) iterates over game configs (ELO ×
-    color). For each game instance, the subgraph runs a ``Loop``: the
-    generator agent picks a move, then ``game_gate`` advances the game state
-    (applies the move, plays Stockfish's response, updates board files).
-    The loop continues until the game is over.  ``GameTask.verify()`` then
-    scores the completed game.
+    Uses ``researcher`` / ``builder`` / ``gate_qa`` node IDs to match the
+    designer's naming convention.  The ``researcher`` analyses the position,
+    the ``builder`` selects the final UCI move, and ``gate_qa`` advances the
+    game state (applies the move, plays Stockfish's response, updates board
+    files).  The loop continues until the game is over.
+    ``GameTask.verify()`` then scores the completed game.
     """
     import sys
     import warnings
@@ -92,13 +105,31 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
     if cfg is None:
         cfg = PipelineConfig()
 
-    # Reuse the generator AgentNode from the base pipeline
-    base_wf = build_position_eval_workflow()
-    generator = base_wf.nodes["generator"].model_copy(deep=True)
+    # Researcher: analyses the position and recommends a move
+    researcher = AgentNode(
+        id="researcher",
+        role=AgentRole.RESEARCHER,
+        prompt_template=RESEARCHER_PROMPT,
+        reads={".factory/chess/board_state.md", ".factory/chess/memory.md"},
+        writes={".factory/chess/analysis.md"},
+    )
 
-    # Game gate: advances game state after each LLM move
-    game_gate = GateNode(
-        id="game_gate",
+    # Builder: reads analysis and board, outputs the final UCI move
+    builder = AgentNode(
+        id="builder",
+        role=AgentRole.BUILDER,
+        prompt_template=BUILDER_PROMPT,
+        reads={
+            ".factory/chess/board_state.md",
+            ".factory/chess/analysis.md",
+            ".factory/chess/memory.md",
+        },
+        writes={".factory/chess/move.md"},
+    )
+
+    # Gate QA: advances game state after each LLM move
+    gate_qa = GateNode(
+        id="gate_qa",
         evaluator_type="fn",
         evaluator_command=(
             f"{sys.executable} -c '"
@@ -108,24 +139,24 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         ),
     )
 
-    # Subgraph: Loop(generator → game_gate), max MAX_MOVES iterations
-    generator_pkg = Package(
+    # Subgraph: researcher → builder inside a Package
+    move_pkg = Package(
         name="move-generator",
         inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
         outputs=[Port(name="move", artifact_path=".factory/chess/move.md")],
         graph=Workflow(
             name="move-gen",
-            nodes={"generator": generator},
-            edges=[],
-            start_node="generator",
+            nodes={"researcher": researcher, "builder": builder},
+            edges=[Edge(source="researcher", target="builder")],
+            start_node="researcher",
         ),
-        entry_node="generator",
-        exit_node="generator",
+        entry_node="researcher",
+        exit_node="builder",
     )
-    game_body = Sequential(generator_pkg, name="generate-move")
+    game_body = Sequential(move_pkg, name="generate-move")
     game_loop = Loop(
         game_body,
-        game_gate,
+        gate_qa,
         max_iterations=MAX_MOVES,
         name="game-loop",
     )

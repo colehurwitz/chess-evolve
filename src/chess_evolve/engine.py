@@ -374,7 +374,9 @@ async def get_pipeline_move(
     memory_path = chess_dir / "memory.md"
     if accumulated_outputs:
         memory_lines = []
-        gen_history = accumulated_outputs.get("generator", [])
+        gen_history = accumulated_outputs.get("builder", [])
+        if not gen_history:
+            gen_history = accumulated_outputs.get("generator", [])
         # Keep last 3 moves of context
         start = max(0, len(gen_history) - 3)
         for i in range(start, len(gen_history)):
@@ -409,6 +411,8 @@ async def get_pipeline_move(
 
     def make_hooked_emit(original_emit):
         NODE_NAME_MAP = {
+            "researcher": "researcher",
+            "builder": "builder",
             "generator": "generator",
             "legality_gate": "legality",
         }
