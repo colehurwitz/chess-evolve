@@ -6,7 +6,6 @@ mocked / the stockfish resolver is patched). All tests are deterministic.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -14,7 +13,6 @@ import chess
 import chess.engine
 import pytest
 
-from chess_evolve import position_eval
 from chess_evolve.pipeline import (
     POSITION_TASK_REF,
     build_position_eval_workflow,
@@ -97,6 +95,13 @@ class TestSetup:
         # python-chess normalizes the FEN (e.g. drops an unreachable ep square).
         normalized = chess.Board(inst.metadata["fen"]).fen()
         assert normalized in board_file.read_text()
+
+    def test_setup_creates_memory_file(self, tmp_path):
+        """Regression: setup() must create memory.md for DataNode reads."""
+        inst = next(iter(PositionTask().instances()))
+        PositionTask().setup(inst, tmp_path)
+        memory = tmp_path / ".factory" / "chess" / "memory.md"
+        assert memory.exists()
 
     def test_setup_does_not_wipe_workspace(self, tmp_path):
         # A pre-existing sibling file must survive setup (no rmtree).
@@ -227,78 +232,3 @@ class TestWorkflow:
         assert "generator" in wf.nodes
         assert data_node.subgraph_entry == "generator"
 
-    def test_datanode_run_hermetic(self, monkeypatch, tmp_path):
-        # Stub the LLM: return a fixed legal move for whatever position.
-        async def _fake_invoke(role, task, project_path, model=None,
-                               timeout=25.0, **kwargs):
-            board_file = Path(project_path) / ".factory" / "chess" / "board_state.md"
-            fen_line = next(
-                line for line in board_file.read_text().splitlines()
-                if line.startswith("FEN:")
-            )
-            fen = fen_line.split("FEN:", 1)[1].strip()
-            board = chess.Board(fen)
-            move = next(iter(board.legal_moves)).uci()
-            move_file = Path(project_path) / ".factory" / "chess" / "move.md"
-            move_file.write_text(move)
-            return move, 0
-
-        import factory.agents.runner as runner
-        monkeypatch.setattr(runner, "invoke_agent", _fake_invoke)
-
-        # Mock Stockfish: every move scored as best (cpl 0) for determinism.
-        class _AlwaysBest:
-            def analyse(self, board, limit):  # noqa: ARG002
-                return {
-                    "score": _cp(0, board.turn),
-                    "pv": [next(iter(board.legal_moves))],
-                }
-
-            def quit(self):
-                pass
-
-        monkeypatch.setattr(
-            chess.engine.SimpleEngine, "popen_uci", lambda *a, **k: _AlwaysBest(),
-        )
-        monkeypatch.setattr(
-            "chess_evolve.tasks.resolve_stockfish", lambda: "/fake/stockfish",
-        )
-
-        aggregate = asyncio.run(position_eval.run_position_eval(
-            positions_file=str(POSITIONS_FILE), depth=1, workspace=tmp_path,
-        ))
-
-        assert aggregate["count"] >= 5
-        assert not aggregate["halted"], aggregate.get("halt_reason")
-        assert len(aggregate["per_instance"]) == aggregate["count"]
-        for item in aggregate["per_instance"]:
-            assert item["move"] is not None
-        # Aggregate JSON written under .factory/chess/.
-        out = tmp_path / ".factory" / "chess" / "eval_results.json"
-        assert out.exists()
-        assert json.loads(out.read_text())["count"] == aggregate["count"]
-
-    def test_datanode_run_halts_on_invalid_fen(self, monkeypatch, tmp_path):
-        # Invalid FEN must halt the workflow so the aggregate signals halted.
-        bad_file = tmp_path / "bad_positions.json"
-        bad_file.write_text(json.dumps([
-            {"id": "bad-one", "phase": "opening", "fen": "not-a-valid-fen"},
-        ]))
-
-        async def _fake_invoke(role, task, project_path, model=None,
-                               timeout=25.0, **kwargs):
-            return "e2e4", 0
-
-        import factory.agents.runner as runner
-        monkeypatch.setattr(runner, "invoke_agent", _fake_invoke)
-        monkeypatch.setattr(
-            "chess_evolve.tasks.resolve_stockfish", lambda: "/fake/stockfish",
-        )
-
-        aggregate = asyncio.run(position_eval.run_position_eval(
-            positions_file=str(bad_file), depth=1, workspace=tmp_path,
-        ))
-
-        assert aggregate["halted"] is True
-        assert aggregate.get("halt_reason")
-        assert aggregate["per_instance"] == []

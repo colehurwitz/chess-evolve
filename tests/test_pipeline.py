@@ -1,78 +1,30 @@
-"""Tests for pipeline definition and factory Package integration."""
+"""Tests for pipeline definition — build_position_eval_workflow()."""
 
 from __future__ import annotations
 
-from factory.workflow.package import Package
-from factory.workflow.primitives import AgentNode, Workflow
+from factory.workflow.primitives import AgentNode, DataNode, Workflow
 
-from chess_evolve.pipeline import _PROMPT_NODES, KNOB_SPACE, PipelineConfig, build_pipeline
-
-
-class TestPipelineConfig:
-    def test_defaults_are_valid(self):
-        cfg = PipelineConfig()
-        assert cfg.opponent_elo == 1500
-        assert cfg.max_retries == 3
-
-    def test_label_includes_mode(self, default_config):
-        assert default_config.label == "seed"
-
-    def test_full_label_includes_knobs(self, default_config):
-        label = default_config.full_label
-        for knob_name, _ in KNOB_SPACE:
-            assert knob_name in label
+from chess_evolve.pipeline import GENERATOR_PROMPT, build_position_eval_workflow
 
 
-class TestBuildPipeline:
-    def test_returns_package(self):
-        pipeline = build_pipeline()
-        assert isinstance(pipeline, Package)
-
-    def test_compile_produces_workflow(self):
-        pipeline = build_pipeline()
-        wf = pipeline.compile()
+class TestBuildPositionEvalWorkflow:
+    def test_returns_workflow(self):
+        wf = build_position_eval_workflow()
         assert isinstance(wf, Workflow)
 
-    def test_compiled_has_generator(self):
-        pipeline = build_pipeline()
-        wf = pipeline.compile()
+    def test_has_positions_data_node(self):
+        wf = build_position_eval_workflow()
+        assert "positions" in wf.nodes
+        assert isinstance(wf.nodes["positions"], DataNode)
+
+    def test_has_generator_agent_node(self):
+        wf = build_position_eval_workflow()
         assert "generator" in wf.nodes
+        assert isinstance(wf.nodes["generator"], AgentNode)
 
-    def test_compiled_has_legality_gate(self):
-        pipeline = build_pipeline()
-        wf = pipeline.compile()
-        assert "legality_gate" in wf.nodes
-
-    def test_compiled_has_knob_values(self):
-        pipeline = build_pipeline()
-        wf = pipeline.compile()
-        assert wf.knob_values
-        for knob_name, _ in KNOB_SPACE:
-            assert knob_name in wf.knob_values
-
-    def test_prompt_nodes_exist_in_compiled(self):
-        pipeline = build_pipeline()
-        wf = pipeline.compile()
-        for nid in _PROMPT_NODES:
-            assert nid in wf.nodes, f"Expected node '{nid}' in compiled workflow"
-
-    def test_generator_has_prompt(self):
-        pipeline = build_pipeline()
-        wf = pipeline.compile()
+    def test_generator_has_chess_prompt(self):
+        wf = build_position_eval_workflow()
         node = wf.nodes["generator"]
         assert isinstance(node, AgentNode)
-        assert node.prompt_template
+        assert node.prompt_template == GENERATOR_PROMPT
         assert "chess" in node.prompt_template.lower()
-
-
-class TestKnobSpaceConsistency:
-    def test_knob_names_match_config_fields(self):
-        cfg = PipelineConfig()
-        for knob_name, _ in KNOB_SPACE:
-            assert hasattr(cfg, knob_name), f"KNOB_SPACE entry '{knob_name}' not in PipelineConfig"
-
-    def test_knob_defaults_in_bounds(self):
-        cfg = PipelineConfig()
-        for knob_name, choices in KNOB_SPACE:
-            val = getattr(cfg, knob_name)
-            assert val in choices, f"Default {knob_name}={val} not in bounds {choices}"
