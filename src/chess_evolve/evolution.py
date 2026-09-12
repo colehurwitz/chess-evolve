@@ -6,9 +6,27 @@ from pathlib import Path
 
 from factory.outer_loop import SwarmConfig, SwarmEngine
 from factory.outer_loop.evaluator import SwarmEvaluator
+from factory.outer_loop.designer import DesignerAgent
+from factory.workflow.primitives import AgentNode
 
-from chess_evolve.pipeline import build_position_eval_workflow
+from chess_evolve.pipeline import build_position_eval_workflow, BUILDER_PROMPT
 from chess_evolve.tasks import PositionTask
+
+
+class ChessDesignerAgent(DesignerAgent):
+    """Custom designer that adds proper prompt template to builder node."""
+
+    def design_minimal(self, benchmark_spec, seed_workflow=None, frozen_node_ids=None):
+        """Create minimal workflow with chess-specific builder prompt."""
+        wf = super().design_minimal(benchmark_spec)
+
+        # Patch the builder node to include the proper prompt template
+        if "builder" in wf.nodes:
+            builder = wf.nodes["builder"]
+            if isinstance(builder, AgentNode):
+                builder.prompt_template = BUILDER_PROMPT
+
+        return wf
 
 
 def main(
@@ -58,7 +76,8 @@ def main(
         inner_loop_factory=True,
         project_dir=project_dir,
     )
-    engine = SwarmEngine(config, evaluator, project_dir=project_dir)
+    designer = ChessDesignerAgent()
+    engine = SwarmEngine(config, evaluator, designer=designer, project_dir=project_dir)
     result = engine.run(workflow, project_dir=str(project_dir))
 
     print(f"Best score: {result.best_score}")
