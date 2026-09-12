@@ -24,7 +24,7 @@ def main(
         task = GameTask()
         workflow = build_game_eval_workflow()
         task_module = "chess_evolve.tasks:GameTask"
-        frozen = ["games"]
+        frozen = ["games", "builder"]
     else:
         task = PositionTask()
         workflow = build_position_eval_workflow()

@@ -26,6 +26,12 @@ GENERATOR_PROMPT = (
     "Pick a move. Output ONLY the UCI move (e.g. e2e4). Nothing else."
 )
 
+BUILDER_PROMPT = (
+    "You are a chess move builder. Read the board state and analysis, "
+    "then pick the single best legal move. "
+    "Output ONLY the UCI move (e.g. e2e4). Nothing else."
+)
+
 
 def build_position_eval_workflow() -> Workflow:
     """Build a DataNode-driven workflow that evaluates positions per-item.
@@ -69,23 +75,45 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
 
     A ``DataNode`` (``task_ref=GameTask``) iterates over game configs (ELO ×
     color). For each game instance, the subgraph runs a ``Loop``: the
-    generator agent picks a move, then ``game_gate`` advances the game state
-    (applies the move, plays Stockfish's response, updates board files).
-    The loop continues until the game is over.  ``GameTask.verify()`` then
-    scores the completed game.
+    researcher analyses the position, the builder picks the move, then
+    ``gate_qa`` advances the game state (applies the move, plays Stockfish's
+    response, updates board files).  The loop continues until the game is
+    over.  ``GameTask.verify()`` then scores the completed game.
+
+    Node IDs (``researcher``, ``builder``, ``gate_qa``) match the names used
+    by the factory designer so that ``frozen_node_ids`` keeps the chess-
+    specific prompts intact across mutations.
     """
     from chess_evolve.config import MAX_MOVES
 
     if cfg is None:
         cfg = PipelineConfig()
 
-    # Reuse the generator AgentNode from the base pipeline
-    base_wf = build_position_eval_workflow()
-    generator = base_wf.nodes["generator"].model_copy(deep=True)
+    # Researcher: analyses the position (reads board state)
+    researcher = AgentNode(
+        id="researcher",
+        role=AgentRole.RESEARCHER,
+        prompt_template=GENERATOR_PROMPT,
+        reads={".factory/chess/board_state.md", ".factory/chess/memory.md"},
+        writes={".factory/chess/analysis.md"},
+    )
 
-    # Game gate: advances game state after each LLM move
-    game_gate = GateNode(
-        id="game_gate",
+    # Builder: picks the actual move using board state and analysis
+    builder = AgentNode(
+        id="builder",
+        role=AgentRole.STRATEGIST,
+        prompt_template=BUILDER_PROMPT,
+        reads={
+            ".factory/chess/board_state.md",
+            ".factory/chess/memory.md",
+            ".factory/chess/analysis.md",
+        },
+        writes={".factory/chess/move.md"},
+    )
+
+    # Gate: advances game state after each LLM move
+    gate_qa = GateNode(
+        id="gate_qa",
         evaluator_type="fn",
         evaluator_command=(
             "python3 -c '"
@@ -95,24 +123,37 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         ),
     )
 
-    # Subgraph: Loop(generator → game_gate), max MAX_MOVES iterations
-    generator_pkg = Package(
-        name="move-generator",
+    # Subgraph: Loop(Sequential(researcher → builder) → gate_qa)
+    researcher_pkg = Package(
+        name="position-analysis",
+        inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
+        outputs=[Port(name="analysis", artifact_path=".factory/chess/analysis.md")],
+        graph=Workflow(
+            name="analyse",
+            nodes={"researcher": researcher},
+            edges=[],
+            start_node="researcher",
+        ),
+        entry_node="researcher",
+        exit_node="researcher",
+    )
+    builder_pkg = Package(
+        name="move-builder",
         inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
         outputs=[Port(name="move", artifact_path=".factory/chess/move.md")],
         graph=Workflow(
-            name="move-gen",
-            nodes={"generator": generator},
+            name="build-move",
+            nodes={"builder": builder},
             edges=[],
-            start_node="generator",
+            start_node="builder",
         ),
-        entry_node="generator",
-        exit_node="generator",
+        entry_node="builder",
+        exit_node="builder",
     )
-    game_body = Sequential(generator_pkg, name="generate-move")
+    game_body = Sequential(researcher_pkg, builder_pkg, name="generate-move")
     game_loop = Loop(
         game_body,
-        game_gate,
+        gate_qa,
         max_iterations=MAX_MOVES,
         name="game-loop",
     )
