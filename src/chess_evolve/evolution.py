@@ -18,18 +18,23 @@ def main(
     project_dir = project_dir or Path.cwd()
 
     if task_type == "game":
-        import importlib.util
+        import os
+
+        from factory.workflow.registry import WorkflowRegistry
 
         from chess_evolve.tasks import GameTask
 
         task = GameTask()
-        wf_path = project_dir / ".factory" / "workflows" / "chess_game.py"
-        spec = importlib.util.spec_from_file_location(
-            "chess_game_wf", str(wf_path),
-        )
-        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
-        workflow = mod.workflow()
+        workflow = WorkflowRegistry.get_workflow("chess-game", project_dir)
+        if workflow is None:
+            raise RuntimeError(
+                "chess-game workflow not found in .factory/workflows/. "
+                "Expected .factory/workflows/chess_game.py with "
+                'meta["name"]="chess-game".'
+            )
+        model_override = os.environ.get("ANTHROPIC_MODEL")
+        if model_override and "generator" in workflow.nodes:
+            workflow.nodes["generator"].model = model_override
         task_module = "chess_evolve.tasks:GameTask"
         frozen = ["games"]
     else:

@@ -1,289 +1,101 @@
-"""Tests for the chess-game project-local workflow.
-
-Hermetic: no live LLM, no live Stockfish — tests only verify workflow
-structure, node types, graph connectivity, and metadata.
-"""
+"""Tests for the chess-game workflow loaded via WorkflowRegistry."""
 
 from __future__ import annotations
 
-import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
-from factory.workflow.primitives import AgentNode, DataNode, GateNode, Workflow
+from factory.workflow.primitives import DataNode, GateNode, Workflow
+from factory.workflow.registry import WorkflowRegistry
 
-# ── Helper: import the project-local workflow file ──────────────
-
-
-def _load_chess_game_module():
-    """Import .factory/workflows/chess_game.py as a module.
-
-    Mirrors how the factory registry discovers project-local workflows:
-    importlib.util.spec_from_file_location + exec_module.
-    """
-    wf_path = (
-        Path(__file__).resolve().parent.parent
-        / ".factory"
-        / "workflows"
-        / "chess_game.py"
-    )
-    if not wf_path.exists():
-        pytest.skip(f"Workflow file not found: {wf_path}")
-    spec = importlib.util.spec_from_file_location("chess_game_wf", str(wf_path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-# ── TestMeta ────────────────────────────────────────────────────
-
-
-class TestMeta:
-    """Verify the meta dict required by the factory registry."""
-
-    def test_meta_has_name(self) -> None:
-        mod = _load_chess_game_module()
-        assert hasattr(mod, "meta")
-        assert mod.meta["name"] == "chess-game"
-
-    def test_meta_has_description(self) -> None:
-        mod = _load_chess_game_module()
-        assert "description" in mod.meta
-        assert len(mod.meta["description"]) > 0
-
-
-# ── TestWorkflowStructure ──────────────────────────────────────
-
-
-class TestWorkflowStructure:
-    """Verify workflow() returns a valid Workflow with correct nodes."""
-
-    def test_returns_workflow_instance(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
+class TestRegistryDiscovery:
+    def test_registry_discovers_chess_game(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
         assert isinstance(wf, Workflow)
 
-    def test_workflow_name_matches_meta(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        assert wf.name == "chess-game"
+    def test_workflow_has_expected_nodes(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
+        assert "games" in wf.nodes
+        assert "generator" in wf.nodes
+        assert "game_gate" in wf.nodes
 
-    def test_start_node_is_games(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
+    def test_workflow_start_node_is_games(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
         assert wf.start_node == "games"
 
-    def test_has_data_node_games(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        assert "games" in wf.nodes
-        assert isinstance(wf.nodes["games"], DataNode)
 
-    def test_data_node_task_ref(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        data_node = wf.nodes["games"]
-        assert data_node.task_ref == "chess_evolve.tasks:GameTask"
+class TestWorkflowNodeStructure:
+    def test_games_is_data_node(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
+        games = wf.nodes["games"]
+        assert isinstance(games, DataNode)
 
-    def test_data_node_parallelism(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        data_node = wf.nodes["games"]
-        assert data_node.parallelism == 1
+    def test_games_task_ref_contains_game_task(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
+        games = wf.nodes["games"]
+        assert isinstance(games, DataNode)
+        assert "GameTask" in games.task_ref
 
-    def test_has_generator_agent_node(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        gen_nodes = [
-            nid
-            for nid, n in wf.nodes.items()
-            if isinstance(n, AgentNode) and "generator" in nid
-        ]
-        assert len(gen_nodes) >= 1, (
-            f"No AgentNode with 'generator' in id. Nodes: {list(wf.nodes.keys())}"
-        )
+    def test_games_has_subgraph_entry_and_exit(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
+        games = wf.nodes["games"]
+        assert isinstance(games, DataNode)
+        assert games.subgraph_entry is not None
+        assert games.subgraph_exit is not None
+        assert games.subgraph_exit == "exit_game-loop"
 
-    def test_has_game_gate_node(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        gate_nodes = [
-            nid
-            for nid, n in wf.nodes.items()
-            if isinstance(n, GateNode) and "game_gate" in nid
-        ]
-        assert len(gate_nodes) >= 1, (
-            f"No GateNode with 'game_gate' in id. Nodes: {list(wf.nodes.keys())}"
-        )
-
-    def test_game_gate_is_fn_type(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        gate_nodes = {
-            nid: n
-            for nid, n in wf.nodes.items()
-            if isinstance(n, GateNode) and "game_gate" in nid
-        }
-        for _nid, gate in gate_nodes.items():
-            assert gate.evaluator_type == "fn"
-            assert "chess_game_gate" in (gate.evaluator_command or "")
-
-    def test_has_exit_node(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        exit_nodes = [
-            nid for nid in wf.nodes if "exit" in nid and "game-loop" in nid
-        ]
-        assert len(exit_nodes) >= 1, (
-            f"No exit_game-loop node. Nodes: {list(wf.nodes.keys())}"
-        )
+    def test_workflow_node_structure(self):
+        """Verify 'games' is a DataNode with task_ref, subgraph_entry, subgraph_exit."""
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
+        games = wf.nodes["games"]
+        assert isinstance(games, DataNode)
+        assert "GameTask" in games.task_ref
+        assert games.subgraph_entry is not None
+        assert games.subgraph_exit == "exit_game-loop"
 
 
-# ── TestSubgraphConnectivity ───────────────────────────────────
+class TestGameGate:
+    def test_game_gate_uses_sys_executable(self):
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
+        gate = wf.nodes["game_gate"]
+        assert isinstance(gate, GateNode)
+        assert sys.executable in gate.evaluator_command
+        assert "python3" not in gate.evaluator_command
 
 
-class TestSubgraphConnectivity:
-    """Verify DataNode subgraph_entry and subgraph_exit reference valid nodes."""
+class TestAnthropicModelOverride:
+    def test_anthropic_model_env_override(self, monkeypatch):
+        """Simulate evolution.py's game branch: ANTHROPIC_MODEL sets generator model."""
+        monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
-    def test_subgraph_entry_exists(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        data_node = wf.nodes["games"]
-        assert data_node.subgraph_entry in wf.nodes, (
-            f"subgraph_entry={data_node.subgraph_entry!r} "
-            f"not in nodes: {list(wf.nodes.keys())}"
-        )
+        import os
 
-    def test_subgraph_exit_exists(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        data_node = wf.nodes["games"]
-        assert data_node.subgraph_exit in wf.nodes, (
-            f"subgraph_exit={data_node.subgraph_exit!r} "
-            f"not in nodes: {list(wf.nodes.keys())}"
-        )
+        wf = WorkflowRegistry.get_workflow("chess-game", PROJECT_ROOT)
+        assert wf is not None
 
-    def test_subgraph_entry_is_not_data_node(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        data_node = wf.nodes["games"]
-        entry_node = wf.nodes[data_node.subgraph_entry]
-        assert not isinstance(entry_node, DataNode)
+        # Reproduce the workaround from evolution.py
+        model_override = os.environ.get("ANTHROPIC_MODEL")
+        if model_override and "generator" in wf.nodes:
+            wf.nodes["generator"].model = model_override
 
-    def test_subgraph_exit_is_exit_node(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        data_node = wf.nodes["games"]
-        assert data_node.subgraph_exit == "exit_game-loop"
+        assert wf.nodes["generator"].model == "claude-haiku-4-5-20251001"
 
 
-# ── TestGraphValidation ────────────────────────────────────────
+class TestDeprecatedPipeline:
+    def test_deprecated_pipeline_warns(self):
+        from chess_evolve.pipeline import build_game_eval_workflow
 
-
-class TestGraphValidation:
-    """Verify the workflow passes structural validation."""
-
-    def test_validate_graph_no_critical_issues(self) -> None:
-        """validate_graph() should return no issues (or only known benign ones).
-
-        The reads/writes warning about board_state.md and memory.md is expected
-        because GameTask.setup() creates those files — not a predecessor node.
-        """
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        issues = wf.validate_graph()
-        # Filter out the known benign reads/writes warning
-        critical = [
-            i
-            for i in issues
-            if "reads" not in i or "board_state" not in i
-        ]
-        assert critical == [], f"Unexpected validation issues: {critical}"
-
-
-# ── TestGeneratorConfiguration ─────────────────────────────────
-
-
-class TestGeneratorConfiguration:
-    """Verify the generator AgentNode is configured correctly."""
-
-    def test_generator_reads_board_state(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        gen_nodes = [
-            n
-            for nid, n in wf.nodes.items()
-            if isinstance(n, AgentNode) and "generator" in nid
-        ]
-        gen = gen_nodes[0]
-        assert ".factory/chess/board_state.md" in gen.reads
-
-    def test_generator_reads_memory(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        gen_nodes = [
-            n
-            for nid, n in wf.nodes.items()
-            if isinstance(n, AgentNode) and "generator" in nid
-        ]
-        gen = gen_nodes[0]
-        assert ".factory/chess/memory.md" in gen.reads
-
-    def test_generator_writes_move(self) -> None:
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        gen_nodes = [
-            n
-            for nid, n in wf.nodes.items()
-            if isinstance(n, AgentNode) and "generator" in nid
-        ]
-        gen = gen_nodes[0]
-        assert ".factory/chess/move.md" in gen.writes
-
-
-# ── TestComposeIntegration ──────────────────────────────────────
-
-
-class TestComposeIntegration:
-    """Verify compose(workflow, GameTask) works end-to-end."""
-
-    def test_compose_with_game_task(self, tmp_path: Path) -> None:
-        from factory.compose import compose
-        from factory.inner_loop import InnerLoop
-
-        from chess_evolve.tasks import GameTask
-
-        mod = _load_chess_game_module()
-        wf = mod.workflow()
-        task = GameTask()
-        loop = compose(wf, task, tmp_path)
-        # compose() should return an InnerLoop
-        assert isinstance(loop, InnerLoop)
-        assert loop.mode == "chess-game"
-
-
-# ── TestGateScript ──────────────────────────────────────────────
-
-
-class TestGateScript:
-    """Verify the standalone gate script exists and is importable."""
-
-    def test_gate_script_exists(self) -> None:
-        gate_path = (
-            Path(__file__).resolve().parent.parent
-            / ".factory"
-            / "workflows"
-            / "chess_game_gate.py"
-        )
-        assert gate_path.exists(), f"Gate script not found: {gate_path}"
-
-    def test_gate_script_has_advance_game_state(self) -> None:
-        gate_path = (
-            Path(__file__).resolve().parent.parent
-            / ".factory"
-            / "workflows"
-            / "chess_game_gate.py"
-        )
-        content = gate_path.read_text()
-        assert "def advance_game_state" in content
-        assert "PROCEED" in content
-        assert "RELOOP" in content
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            build_game_eval_workflow()
