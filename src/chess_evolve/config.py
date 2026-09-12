@@ -33,3 +33,8 @@ def resolve_stockfish() -> str | None:
         if Path(candidate).exists():
             return candidate
     return None
+
+
+ELO_OPTIONS = [1320, 1420, 1520, 1620]
+MAX_MOVES = 60
+WORKSPACE = Path(os.environ.get("CHESS_WORKSPACE", "/tmp/chess-factory"))

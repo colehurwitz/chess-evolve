@@ -6,7 +6,17 @@ chess positions via SwarmEngine.
 
 from __future__ import annotations
 
-from factory.workflow.primitives import AgentNode, AgentRole, DataNode, Workflow
+from dataclasses import dataclass
+
+from factory.workflow.package import Loop, Package, Port, Sequential
+from factory.workflow.primitives import AgentNode, AgentRole, DataNode, GateNode, Workflow
+
+
+@dataclass
+class PipelineConfig:
+    """Minimal config for pipeline construction."""
+    opponent_elo: int = 1500
+    max_retries: int = 3
 
 POSITION_TASK_REF = "chess_evolve.tasks:PositionTask"
 GAME_TASK_REF = "chess_evolve.tasks:GameTask"
@@ -70,7 +80,7 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         cfg = PipelineConfig()
 
     # Reuse the generator AgentNode from the base pipeline
-    base_wf = build_pipeline(cfg).compile()
+    base_wf = build_position_eval_workflow()
     generator = base_wf.nodes["generator"].model_copy(deep=True)
 
     # Game gate: advances game state after each LLM move
@@ -115,7 +125,7 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         id="games",
         task_ref=GAME_TASK_REF,
         subgraph_entry=loop_wf.start_node,
-        subgraph_exit="game_gate",
+        subgraph_exit="exit_game-loop",
         parallelism=1,
         writes={".factory/chess/game_results.json"},
     )
