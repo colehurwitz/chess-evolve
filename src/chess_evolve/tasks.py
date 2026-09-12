@@ -283,6 +283,7 @@ class GameTask(Task):
         chess_dir.mkdir(parents=True, exist_ok=True)
         board = chess.Board()
         write_board_state(workspace, board)
+        (chess_dir / "memory.md").write_text("")
         game_state = {
             "opponent_elo": instance.metadata["opponent_elo"],
             "color": instance.metadata["color"],
