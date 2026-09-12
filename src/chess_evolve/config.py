@@ -33,3 +33,10 @@ def resolve_stockfish() -> str | None:
         if Path(candidate).exists():
             return candidate
     return None
+
+
+# Default ELO options for GameTask instances.
+ELO_OPTIONS: list[int] = [1320]
+
+# Maximum moves per game before auto-adjudication.
+MAX_MOVES: int = 80

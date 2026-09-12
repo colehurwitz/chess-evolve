@@ -1,12 +1,15 @@
-"""Pipeline definition: build_position_eval_workflow().
+"""Pipeline definition: build_position_eval_workflow() & build_game_eval_workflow().
 
-Provides the DataNode-driven workflow used by evolution.py to evaluate
-chess positions via SwarmEngine.
+Provides the DataNode-driven workflows used by evolution.py to evaluate
+chess positions and full games via SwarmEngine.
 """
 
 from __future__ import annotations
 
-from factory.workflow.primitives import AgentNode, AgentRole, DataNode, Workflow
+from dataclasses import dataclass
+
+from factory.workflow.package import Loop, Package, Port, Sequential
+from factory.workflow.primitives import AgentNode, AgentRole, DataNode, GateNode, Workflow
 
 POSITION_TASK_REF = "chess_evolve.tasks:PositionTask"
 GAME_TASK_REF = "chess_evolve.tasks:GameTask"
@@ -15,6 +18,14 @@ GENERATOR_PROMPT = (
     "You are playing chess. Look at the board position and legal moves. "
     "Pick a move. Output ONLY the UCI move (e.g. e2e4). Nothing else."
 )
+
+
+@dataclass
+class PipelineConfig:
+    """Configuration knobs for pipeline execution."""
+
+    board_representation: str = "fen"
+    use_game_context: bool = True
 
 
 def build_position_eval_workflow() -> Workflow:
@@ -54,28 +65,34 @@ def build_position_eval_workflow() -> Workflow:
     )
 
 
-def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
+def build_game_eval_workflow() -> Workflow:
     """Build a DataNode-driven workflow for full-game evaluation.
 
     A ``DataNode`` (``task_ref=GameTask``) iterates over game configs (ELO ×
-    color). For each game instance, the subgraph runs a ``Loop``: the
-    generator agent picks a move, then ``game_gate`` advances the game state
+    color).  For each game instance the subgraph runs a ``Loop``: the
+    *builder* agent picks a move, then *gate_qa* advances the game state
     (applies the move, plays Stockfish's response, updates board files).
     The loop continues until the game is over.  ``GameTask.verify()`` then
     scores the completed game.
+
+    Node IDs (``builder``, ``gate_qa``) match the names the SwarmEngine
+    designer emits so that ``frozen_node_ids`` can preserve the
+    chess-specific prompt template across generations.
     """
     from chess_evolve.config import MAX_MOVES
 
-    if cfg is None:
-        cfg = PipelineConfig()
+    # Builder: the move-picking agent — carries the chess-specific prompt
+    builder = AgentNode(
+        id="builder",
+        role=AgentRole.STRATEGIST,
+        prompt_template=GENERATOR_PROMPT,
+        reads={".factory/chess/board_state.md", ".factory/chess/memory.md"},
+        writes={".factory/chess/move.md"},
+    )
 
-    # Reuse the generator AgentNode from the base pipeline
-    base_wf = build_pipeline(cfg).compile()
-    generator = base_wf.nodes["generator"].model_copy(deep=True)
-
-    # Game gate: advances game state after each LLM move
-    game_gate = GateNode(
-        id="game_gate",
+    # Gate: advances game state after each LLM move
+    gate_qa = GateNode(
+        id="gate_qa",
         evaluator_type="fn",
         evaluator_command=(
             "python3 -c '"
@@ -85,24 +102,24 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         ),
     )
 
-    # Subgraph: Loop(generator → game_gate), max MAX_MOVES iterations
-    generator_pkg = Package(
+    # Subgraph: Loop(builder → gate_qa), max MAX_MOVES iterations
+    builder_pkg = Package(
         name="move-generator",
         inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
         outputs=[Port(name="move", artifact_path=".factory/chess/move.md")],
         graph=Workflow(
             name="move-gen",
-            nodes={"generator": generator},
+            nodes={"builder": builder},
             edges=[],
-            start_node="generator",
+            start_node="builder",
         ),
-        entry_node="generator",
-        exit_node="generator",
+        entry_node="builder",
+        exit_node="builder",
     )
-    game_body = Sequential(generator_pkg, name="generate-move")
+    game_body = Sequential(builder_pkg, name="generate-move")
     game_loop = Loop(
         game_body,
-        game_gate,
+        gate_qa,
         max_iterations=MAX_MOVES,
         name="game-loop",
     )
@@ -115,7 +132,7 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         id="games",
         task_ref=GAME_TASK_REF,
         subgraph_entry=loop_wf.start_node,
-        subgraph_exit="game_gate",
+        subgraph_exit="gate_qa",
         parallelism=1,
         writes={".factory/chess/game_results.json"},
     )
