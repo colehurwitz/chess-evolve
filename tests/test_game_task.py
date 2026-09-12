@@ -465,30 +465,27 @@ class TestBuildGameEvalWorkflow:
         assert isinstance(data_node, DataNode)
         assert data_node.task_ref == GAME_TASK_REF
 
-    def test_has_generator(self) -> None:
+    def test_has_builder(self) -> None:
         from factory.workflow.primitives import AgentNode
 
-        from chess_evolve.pipeline import build_game_eval_workflow
+        from chess_evolve.pipeline import GENERATOR_PROMPT, build_game_eval_workflow
 
         wf = build_game_eval_workflow()
-        # The generator should be somewhere in the compiled nodes
-        gen_nodes = [
-            nid for nid, n in wf.nodes.items()
-            if isinstance(n, AgentNode) and "generator" in nid
-        ]
-        assert len(gen_nodes) >= 1
+        assert "builder" in wf.nodes
+        builder = wf.nodes["builder"]
+        assert isinstance(builder, AgentNode)
+        assert builder.prompt_template == GENERATOR_PROMPT
 
-    def test_has_game_gate(self) -> None:
+    def test_has_gate_qa(self) -> None:
         from factory.workflow.primitives import GateNode
 
         from chess_evolve.pipeline import build_game_eval_workflow
 
         wf = build_game_eval_workflow()
-        gate_nodes = [
-            nid for nid, n in wf.nodes.items()
-            if isinstance(n, GateNode) and "game_gate" in nid
-        ]
-        assert len(gate_nodes) >= 1
+        assert "gate_qa" in wf.nodes
+        gate = wf.nodes["gate_qa"]
+        assert isinstance(gate, GateNode)
+        assert gate.evaluator_type == "fn"
 
     def test_subgraph_entry_valid(self) -> None:
         from chess_evolve.pipeline import build_game_eval_workflow
