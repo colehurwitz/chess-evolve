@@ -6,6 +6,7 @@ chess positions via SwarmEngine.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from factory.workflow.package import Loop, Package, Port, Sequential
@@ -118,7 +119,7 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         id="gate_qa",
         evaluator_type="fn",
         evaluator_command=(
-            "python3 -c '"
+            f"{sys.executable} -c '"
             "from chess_evolve.engine import advance_game_state; "
             "advance_game_state(\"{project_path}\")"
             "'"

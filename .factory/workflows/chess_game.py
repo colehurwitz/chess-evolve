@@ -7,6 +7,8 @@ driving per-instance lifecycle (setup, verify, scoring).
 
 from __future__ import annotations
 
+import sys
+
 from factory.workflow.package import Loop, Package, Port, Sequential
 from factory.workflow.primitives import (
     AgentNode,
@@ -52,7 +54,7 @@ def workflow() -> Workflow:
         id="game_gate",
         evaluator_type="fn",
         evaluator_command=(
-            "python3 {project_path}/.factory/workflows/chess_game_gate.py"
+            f"{sys.executable} {{project_path}}/.factory/workflows/chess_game_gate.py"
             ' "{project_path}"'
         ),
     )
