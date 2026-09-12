@@ -31,7 +31,7 @@ def main(
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
         workflow = mod.workflow()
         task_module = "chess_evolve.tasks:GameTask"
-        frozen = ["games"]
+        frozen = ["games", "builder"]
     else:
         task = PositionTask()
         workflow = build_position_eval_workflow()
