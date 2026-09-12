@@ -20,15 +20,21 @@ class ChessDesignerAgent(DesignerAgent):
         """Create minimal workflow with chess-specific builder prompt and configuration."""
         wf = super().design_minimal(benchmark_spec)
 
+        # Patch researcher to write analysis to chess-specific location
+        if "researcher" in wf.nodes:
+            researcher = wf.nodes["researcher"]
+            if isinstance(researcher, AgentNode):
+                researcher.writes = {".factory/chess/analysis.md"}
+
         # Patch the builder node to include the proper prompt template and reads
         if "builder" in wf.nodes:
             builder = wf.nodes["builder"]
             if isinstance(builder, AgentNode):
                 builder.prompt_template = BUILDER_PROMPT
-                # Ensure builder reads the researcher's output
+                # Ensure builder reads the researcher's output and board state
                 builder.reads = {
                     ".factory/chess/board_state.md",
-                    ".factory/strategy/research.md",
+                    ".factory/chess/analysis.md",
                     ".factory/chess/memory.md",
                 }
 
