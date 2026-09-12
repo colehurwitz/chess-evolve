@@ -6,7 +6,26 @@ chess positions via SwarmEngine.
 
 from __future__ import annotations
 
-from factory.workflow.primitives import AgentNode, AgentRole, DataNode, Workflow
+from dataclasses import dataclass
+
+from factory.workflow.primitives import (
+    AgentNode,
+    AgentRole,
+    DataNode,
+    Edge,
+    GateNode,
+    Workflow,
+)
+
+
+@dataclass
+class PipelineConfig:
+    """Minimal config for pipeline construction."""
+
+    opponent_elo: int = 1500
+    max_retries: int = 3
+    board_representation: str = "fen"
+    use_game_context: bool = True
 
 POSITION_TASK_REF = "chess_evolve.tasks:PositionTask"
 GAME_TASK_REF = "chess_evolve.tasks:GameTask"
@@ -54,76 +73,102 @@ def build_position_eval_workflow() -> Workflow:
     )
 
 
+BUILDER_PROMPT = (
+    "Read the chess move from .factory/strategy/research.md. "
+    "Apply it to the game state in .factory/chess/game_state.json: "
+    "push the move UCI string to move_list, increment move_count, "
+    "and update the FEN using python-chess. "
+    "Then update .factory/chess/board_state.md with the new board "
+    "position, legal moves for the side to move, and the correct "
+    "'You are playing …' label. "
+    "Finally update .factory/current_item.json prompt with the "
+    "new FEN, legal moves, and board so the next move can be chosen."
+)
+
+
 def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
     """Build a DataNode-driven workflow for full-game evaluation.
 
-    A ``DataNode`` (``task_ref=GameTask``) iterates over game configs (ELO ×
-    color). For each game instance, the subgraph runs a ``Loop``: the
-    generator agent picks a move, then ``game_gate`` advances the game state
-    (applies the move, plays Stockfish's response, updates board files).
-    The loop continues until the game is over.  ``GameTask.verify()`` then
-    scores the completed game.
-    """
-    from chess_evolve.config import MAX_MOVES
+    The subgraph uses **researcher → builder → gate_qa** to match the
+    node IDs that ``factory.outer_loop.designer.design_minimal`` creates.
+    By freezing ``builder`` in ``frozen_node_ids``, the designer cannot
+    replace it with an empty-prompt AgentNode — the chess-specific
+    prompt template is preserved across generations.
 
+    A ``DataNode`` (``task_ref=GameTask``) iterates over game configs
+    (ELO × color).  For each game instance the subgraph runs:
+
+    1. **researcher** — picks a move (AgentNode, gets board via
+       ``initial_context``)
+    2. **builder** — applies the move to game state files (AgentNode
+       with chess-specific ``prompt_template``)
+    3. **gate_qa** — reviews the result and RELOOPs if needed
+
+    ``GameTask.verify()`` scores the completed game.
+    """
     if cfg is None:
         cfg = PipelineConfig()
 
-    # Reuse the generator AgentNode from the base pipeline
-    base_wf = build_pipeline(cfg).compile()
-    generator = base_wf.nodes["generator"].model_copy(deep=True)
+    researcher = AgentNode(
+        id="researcher",
+        role=AgentRole.RESEARCHER,
+        prompt_template=GENERATOR_PROMPT,
+        reads={".factory/chess/board_state.md", ".factory/chess/memory.md"},
+        writes={".factory/strategy/research.md"},
+        timeout=300,
+    )
 
-    # Game gate: advances game state after each LLM move
-    game_gate = GateNode(
-        id="game_gate",
-        evaluator_type="fn",
-        evaluator_command=(
-            "python3 -c '"
-            "from chess_evolve.engine import advance_game_state; "
-            "advance_game_state(\"{project_path}\")"
-            "'"
+    builder = AgentNode(
+        id="builder",
+        role=AgentRole.BUILDER,
+        prompt_template=BUILDER_PROMPT,
+        reads={
+            ".factory/strategy/research.md",
+            ".factory/chess/game_state.json",
+        },
+        writes={
+            ".factory/reviews/builder-latest.md",
+            ".factory/chess/game_state.json",
+            ".factory/chess/board_state.md",
+        },
+        timeout=600,
+    )
+
+    gate_qa = GateNode(
+        id="gate_qa",
+        evaluator_type="agent",
+        evaluator_role=AgentRole.CEO,
+        gate_prompt=(
+            "Read the builder output at .factory/reviews/builder-latest.md. "
+            "Verify the game state was updated correctly (FEN, move_list, "
+            "board_state). PROCEED if correct, RELOOP to builder if not."
         ),
+        reads={".factory/reviews/builder-latest.md"},
     )
 
-    # Subgraph: Loop(generator → game_gate), max MAX_MOVES iterations
-    generator_pkg = Package(
-        name="move-generator",
-        inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
-        outputs=[Port(name="move", artifact_path=".factory/chess/move.md")],
-        graph=Workflow(
-            name="move-gen",
-            nodes={"generator": generator},
-            edges=[],
-            start_node="generator",
-        ),
-        entry_node="generator",
-        exit_node="generator",
-    )
-    game_body = Sequential(generator_pkg, name="generate-move")
-    game_loop = Loop(
-        game_body,
-        game_gate,
-        max_iterations=MAX_MOVES,
-        name="game-loop",
-    )
-
-    # Compile the loop into a flat workflow to extract nodes
-    loop_wf = game_loop.compile()
-
-    # DataNode wraps the compiled loop subgraph
     data_node = DataNode(
         id="games",
         task_ref=GAME_TASK_REF,
-        subgraph_entry=loop_wf.start_node,
-        subgraph_exit="game_gate",
+        subgraph_entry="researcher",
+        subgraph_exit="gate_qa",
         parallelism=1,
         writes={".factory/chess/game_results.json"},
     )
 
-    all_nodes = {"games": data_node, **loop_wf.nodes}
+    nodes = {
+        "games": data_node,
+        "researcher": researcher,
+        "builder": builder,
+        "gate_qa": gate_qa,
+    }
+    edges = [
+        Edge(source="researcher", target="builder"),
+        Edge(source="builder", target="gate_qa"),
+    ]
+
     return Workflow(
         name="game-eval",
-        nodes=all_nodes,
-        edges=loop_wf.edges,
+        nodes=nodes,  # type: ignore[arg-type]
+        edges=edges,
         start_node="games",
     )

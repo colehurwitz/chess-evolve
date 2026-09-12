@@ -6,6 +6,12 @@ import os
 import shutil
 from pathlib import Path
 
+# ELO levels for game evaluation (GameTask iterates these × color).
+ELO_OPTIONS: tuple[int, ...] = (1320, 1520)
+
+# Maximum half-move pairs (ply-pairs) per game before auto-adjudication.
+MAX_MOVES: int = 80
+
 # Common install locations checked as a last resort (no hardcoded single path).
 _STOCKFISH_COMMON_PATHS = (
     "/usr/bin/stockfish",
