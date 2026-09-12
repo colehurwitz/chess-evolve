@@ -1,14 +1,15 @@
 """chess-game workflow — DataNode-driven full-game evaluation against Stockfish.
 
 Project-local workflow discovered automatically by the factory registry.
-Plays full games via a Loop(generator → game_gate) pattern, with GameTask
-driving per-instance lifecycle (setup, verify, scoring).
+Simple: one generator picks a move, one gate advances the game.
+The outer loop evolves prompt complexity.
 """
 
 from __future__ import annotations
 
 import sys
 
+from chess_evolve.config import MAX_MOVES
 from factory.workflow.package import Loop, Package, Port, Sequential
 from factory.workflow.primitives import (
     AgentNode,
@@ -18,8 +19,12 @@ from factory.workflow.primitives import (
     Workflow,
 )
 
-from chess_evolve.config import MAX_MOVES
-from chess_evolve.pipeline import GAME_TASK_REF, GENERATOR_PROMPT
+GAME_TASK_REF = "chess_evolve.tasks:GameTask"
+
+GENERATOR_PROMPT = (
+    "You are playing chess. Look at the board position and legal moves. "
+    "Pick a move. Output ONLY the UCI move (e.g. e2e4). Nothing else."
+)
 
 meta = {
     "name": "chess-game",
@@ -28,19 +33,7 @@ meta = {
 
 
 def workflow() -> Workflow:
-    """Build a DataNode-driven workflow for full-game evaluation.
-
-    Structure::
-
-        DataNode(games)
-          └─ subgraph: Loop(generator → game_gate, max_iterations=MAX_MOVES)
-               ├─ generator: AgentNode(reads board_state + memory, writes move)
-               └─ game_gate: GateNode(advance_game_state → RELOOP | PROCEED)
-
-    Returns:
-        Workflow with DataNode 'games' as start node wrapping the game loop.
-    """
-    # ── 1. Generator AgentNode ──────────────────────────────────
+    """Simple game loop: generator picks move, gate advances game."""
     generator = AgentNode(
         id="generator",
         role=AgentRole.STRATEGIST,
@@ -49,17 +42,17 @@ def workflow() -> Workflow:
         writes={".factory/chess/move.md"},
     )
 
-    # ── 2. Game gate GateNode ───────────────────────────────────
     game_gate = GateNode(
         id="game_gate",
         evaluator_type="fn",
         evaluator_command=(
-            f"{sys.executable} {{project_path}}/.factory/workflows/chess_game_gate.py"
-            ' "{project_path}"'
+            f"{sys.executable} -c '"
+            "from chess_evolve.engine import advance_game_state; "
+            "advance_game_state(\"{project_path}\")"
+            "'"
         ),
     )
 
-    # ── 3. Package the generator for Loop composition ───────────
     generator_pkg = Package(
         name="move-generator",
         inputs=[Port(name="board", artifact_path=".factory/chess/board_state.md")],
@@ -74,19 +67,15 @@ def workflow() -> Workflow:
         exit_node="generator",
     )
 
-    # ── 4. Loop: generator → game_gate ──────────────────────────
-    game_body = Sequential(generator_pkg, name="generate-move")
     game_loop = Loop(
-        game_body,
+        Sequential(generator_pkg, name="generate-move"),
         game_gate,
         max_iterations=MAX_MOVES,
         name="game-loop",
     )
 
-    # ── 5. Compile loop into flat workflow ───────────────────────
     loop_wf = game_loop.compile()
 
-    # ── 6. DataNode wraps the compiled loop subgraph ────────────
     data_node = DataNode(
         id="games",
         task_ref=GAME_TASK_REF,
@@ -96,11 +85,9 @@ def workflow() -> Workflow:
         writes={".factory/chess/game_results.json"},
     )
 
-    # ── 7. Assemble final workflow ──────────────────────────────
-    all_nodes: dict = {"games": data_node, **loop_wf.nodes}
     return Workflow(
         name="chess-game",
-        nodes=all_nodes,
+        nodes={"games": data_node, **loop_wf.nodes},
         edges=loop_wf.edges,
         start_node="games",
     )

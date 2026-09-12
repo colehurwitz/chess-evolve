@@ -35,7 +35,7 @@ RESEARCHER_PROMPT = (
 
 BUILDER_PROMPT = (
     "You are a chess move selector. Read the board position and the analyst's "
-    "recommendation. Pick the best legal move.\n\n"
+    "recommendation from the research. Pick the best legal move.\n\n"
     "Output ONLY the UCI move (e.g. e2e4). Nothing else."
 )
 
