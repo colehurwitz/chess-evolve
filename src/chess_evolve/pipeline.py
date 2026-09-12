@@ -65,7 +65,9 @@ def build_position_eval_workflow() -> Workflow:
 
 
 def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
-    """Build a DataNode-driven workflow for full-game evaluation.
+    """DEPRECATED: Use .factory/workflows/chess_game.py via WorkflowRegistry instead.
+
+    Build a DataNode-driven workflow for full-game evaluation.
 
     A ``DataNode`` (``task_ref=GameTask``) iterates over game configs (ELO ×
     color). For each game instance, the subgraph runs a ``Loop``: the
@@ -74,6 +76,17 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
     The loop continues until the game is over.  ``GameTask.verify()`` then
     scores the completed game.
     """
+    import sys
+    import warnings
+
+    warnings.warn(
+        "build_game_eval_workflow() is deprecated. "
+        "Use WorkflowRegistry.get_workflow('chess-game', project_dir) instead. "
+        "See .factory/workflows/chess_game.py.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     from chess_evolve.config import MAX_MOVES
 
     if cfg is None:
@@ -88,7 +101,7 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         id="game_gate",
         evaluator_type="fn",
         evaluator_command=(
-            "python3 -c '"
+            f"{sys.executable} -c '"
             "from chess_evolve.engine import advance_game_state; "
             "advance_game_state(\"{project_path}\")"
             "'"

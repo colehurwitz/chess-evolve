@@ -18,11 +18,27 @@ def main(
     project_dir = project_dir or Path.cwd()
 
     if task_type == "game":
-        from chess_evolve.pipeline import build_game_eval_workflow
+        import os
+
+        from factory.workflow.registry import WorkflowRegistry
+
         from chess_evolve.tasks import GameTask
 
         task = GameTask()
-        workflow = build_game_eval_workflow()
+        workflow = WorkflowRegistry.get_workflow("chess-game", project_dir)
+        if workflow is None:
+            raise RuntimeError(
+                "chess-game workflow not found in .factory/workflows/. "
+                "Expected .factory/workflows/chess_game.py with "
+                "meta[\"name\"]=\"chess-game\"."
+            )
+        # WORKAROUND: WorkflowExecutor does NOT read ANTHROPIC_MODEL from env.
+        # We read it ourselves and set the generator node's model field directly.
+        # See: factory/workflow/executor.py _run_agent() — checks node.model,
+        # then agent_pool[role].model, then None. No env var fallback.
+        model_override = os.environ.get("ANTHROPIC_MODEL")
+        if model_override and "generator" in workflow.nodes:
+            workflow.nodes["generator"].model = model_override
         task_module = "chess_evolve.tasks:GameTask"
         frozen = ["games"]
     else:
