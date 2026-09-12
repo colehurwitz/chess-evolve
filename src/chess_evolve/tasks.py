@@ -23,12 +23,37 @@ from factory.task import Task, TaskInstance, VerifyResult
 from chess_evolve.config import ELO_OPTIONS, resolve_stockfish
 
 
-def write_board_state(workspace: Path, board: chess.Board) -> None:
-    """Write the current board state as an artifact for the pipeline to read."""
+def write_board_state(
+    workspace: Path,
+    board: chess.Board,
+    *,
+    player_color: str | None = None,
+) -> None:
+    """Write the current board state as an artifact for the pipeline to read.
+
+    Parameters
+    ----------
+    workspace:
+        Project root path.
+    board:
+        Current chess board.
+    player_color:
+        The LLM's assigned color (``"white"`` or ``"black"``).  When provided,
+        the "You are playing …" label reflects the *assigned* side rather than
+        ``board.turn`` (whose turn it currently is).  For ``GameTask`` the LLM
+        keeps the same color throughout the game, so this must be passed to
+        avoid mis-labelling the player when it is the opponent's turn.
+        ``PositionTask`` omits this argument; the default (``None``) falls back
+        to ``board.turn``, which is always the side to evaluate.
+    """
     legal_moves = [move.uci() for move in board.legal_moves]
+    if player_color is not None:
+        color_label = "White" if player_color == "white" else "Black"
+    else:
+        color_label = "White" if board.turn else "Black"
     content = (
         f"FEN: {board.fen()}\n\n"
-        f"You are playing {'White' if board.turn else 'Black'}.\n\n"
+        f"You are playing {color_label}.\n\n"
         f"Legal moves: {', '.join(legal_moves)}\n\n"
         f"Board:\n{board}\n"
     )
@@ -282,7 +307,9 @@ class GameTask(Task):
         chess_dir = workspace / ".factory" / "chess"
         chess_dir.mkdir(parents=True, exist_ok=True)
         board = chess.Board()
-        write_board_state(workspace, board)
+        write_board_state(
+            workspace, board, player_color=instance.metadata["color"],
+        )
         (chess_dir / "memory.md").write_text("")
         game_state = {
             "opponent_elo": instance.metadata["opponent_elo"],

@@ -255,12 +255,29 @@ def setup_workspace(workspace: Path) -> None:
     (workspace / ".factory" / "reviews").mkdir(parents=True)
 
 
-def write_board_state(workspace: Path, board: chess.Board) -> None:
-    """Write the current board state as an artifact for the pipeline to read."""
+def write_board_state(
+    workspace: Path,
+    board: chess.Board,
+    *,
+    player_color: str | None = None,
+) -> None:
+    """Write the current board state as an artifact for the pipeline to read.
+
+    Parameters
+    ----------
+    player_color:
+        The LLM's assigned color (``"white"`` or ``"black"``).  When provided,
+        the "You are playing …" label reflects the *assigned* side rather than
+        ``board.turn``.  Defaults to ``board.turn`` for backward compatibility.
+    """
     legal_moves = [move.uci() for move in board.legal_moves]
+    if player_color is not None:
+        color_label = "White" if player_color == "white" else "Black"
+    else:
+        color_label = "White" if board.turn else "Black"
     content = (
         f"FEN: {board.fen()}\n\n"
-        f"You are playing {'White' if board.turn else 'Black'}.\n\n"
+        f"You are playing {color_label}.\n\n"
         f"Legal moves: {', '.join(legal_moves)}\n\n"
         f"Board:\n{board}\n"
     )
@@ -633,7 +650,7 @@ def advance_game_state(project_path: str) -> None:
             return
         # Now it's LLM's turn — update board_state.md for generator
         state["fen"] = board.fen()
-        write_board_state(workspace, board)
+        write_board_state(workspace, board, player_color=state["color"])
         (chess_dir / "game_state.json").write_text(json.dumps(state))
         print("RELOOP")
         return
@@ -679,5 +696,5 @@ def advance_game_state(project_path: str) -> None:
     # Update board state for next generator iteration
     state["fen"] = board.fen()
     (chess_dir / "game_state.json").write_text(json.dumps(state))
-    write_board_state(workspace, board)
+    write_board_state(workspace, board, player_color=state["color"])
     print("RELOOP")

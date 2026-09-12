@@ -129,7 +129,7 @@ def advance_game_state(project_path: str) -> None:
             return
         # Now it's LLM's turn — update board_state.md for generator
         state["fen"] = board.fen()
-        write_board_state(workspace, board)
+        write_board_state(workspace, board, player_color=state["color"])
         (chess_dir / "game_state.json").write_text(json.dumps(state))
         print("RELOOP")
         return
@@ -175,7 +175,7 @@ def advance_game_state(project_path: str) -> None:
     # Update board state for next generator iteration
     state["fen"] = board.fen()
     (chess_dir / "game_state.json").write_text(json.dumps(state))
-    write_board_state(workspace, board)
+    write_board_state(workspace, board, player_color=state["color"])
     print("RELOOP")
 
 
