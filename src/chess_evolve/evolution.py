@@ -18,11 +18,18 @@ def main(
     project_dir = project_dir or Path.cwd()
 
     if task_type == "game":
-        from chess_evolve.pipeline import build_game_eval_workflow
+        import importlib.util
+
         from chess_evolve.tasks import GameTask
 
         task = GameTask()
-        workflow = build_game_eval_workflow()
+        wf_path = project_dir / ".factory" / "workflows" / "chess_game.py"
+        spec = importlib.util.spec_from_file_location(
+            "chess_game_wf", str(wf_path),
+        )
+        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        workflow = mod.workflow()
         task_module = "chess_evolve.tasks:GameTask"
         frozen = ["games"]
     else:
