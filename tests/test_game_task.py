@@ -522,14 +522,27 @@ class TestInferGeneration:
 
     def test_counts_reflection_files(self, tmp_path: Path) -> None:
         """Counts gen*.json files in reflections directory."""
-        # workspace.parent.parent must equal project_root
+        import subprocess
+
+        # _resolve_project_root uses git rev-parse, so project_root must be a git repo
         project_root = tmp_path
+        subprocess.run(["git", "init", str(project_root)], capture_output=True, check=True)
         ref_dir = project_root / ".factory" / "outer_loop" / "reflections"
         ref_dir.mkdir(parents=True)
         (ref_dir / "gen0.json").write_text("{}")
         (ref_dir / "gen1.json").write_text("{}")
-        workspace = project_root / "eval" / "wt-test"
-        workspace.mkdir(parents=True)
+        # Create a worktree so _resolve_project_root resolves to project_root
+        subprocess.run(
+            ["git", "-C", str(project_root), "commit", "--allow-empty", "-m", "init"],
+            capture_output=True, check=True,
+        )
+        workspace = tmp_path / "eval-wt" / "wt-test"
+        workspace.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "worktree", "add",
+             "-b", "eval-branch", str(workspace)],
+            capture_output=True, check=True,
+        )
         with patch.dict(os.environ, {}, clear=True):
             # Ensure FACTORY_GENERATION not set
             os.environ.pop("FACTORY_GENERATION", None)
@@ -560,13 +573,23 @@ class TestGameTaskPersistence:
 
     def test_verify_persists_game_state(self, tmp_path: Path) -> None:
         """Completed games (game_over=True) are persisted to games dir."""
-        # Set up workspace inside a fake project structure:
-        # project_root / worktree  (workspace = worktree,
-        #   workspace.parent.parent = project_root)
+        import subprocess
+
+        # Set up workspace as a git worktree so _resolve_project_root works
         project_root = tmp_path / "project"
         project_root.mkdir()
-        workspace = project_root / "eval" / "wt-test"
-        workspace.mkdir(parents=True)
+        subprocess.run(["git", "init", str(project_root)], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "commit", "--allow-empty", "-m", "init"],
+            capture_output=True, check=True,
+        )
+        workspace = tmp_path / "eval-wt" / "wt-test"
+        workspace.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "worktree", "add",
+             "-b", "eval-branch", str(workspace)],
+            capture_output=True, check=True,
+        )
 
         state = {
             "opponent_elo": 1500,
@@ -603,10 +626,22 @@ class TestGameTaskPersistence:
         self, tmp_path: Path,
     ) -> None:
         """Incomplete games (game_over=False) are NOT persisted."""
+        import subprocess
+
         project_root = tmp_path / "project"
         project_root.mkdir()
-        workspace = project_root / "eval" / "wt-test"
-        workspace.mkdir(parents=True)
+        subprocess.run(["git", "init", str(project_root)], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "commit", "--allow-empty", "-m", "init"],
+            capture_output=True, check=True,
+        )
+        workspace = tmp_path / "eval-wt" / "wt-test"
+        workspace.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "worktree", "add",
+             "-b", "eval-branch", str(workspace)],
+            capture_output=True, check=True,
+        )
 
         state = {
             "opponent_elo": 1500,
@@ -633,10 +668,22 @@ class TestGameTaskPersistence:
         self, tmp_path: Path,
     ) -> None:
         """Even if persistence raises, verify() still returns normally."""
+        import subprocess
+
         project_root = tmp_path / "project"
         project_root.mkdir()
-        workspace = project_root / "eval" / "wt-test"
-        workspace.mkdir(parents=True)
+        subprocess.run(["git", "init", str(project_root)], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "commit", "--allow-empty", "-m", "init"],
+            capture_output=True, check=True,
+        )
+        workspace = tmp_path / "eval-wt" / "wt-test"
+        workspace.parent.mkdir(parents=True)
+        subprocess.run(
+            ["git", "-C", str(project_root), "worktree", "add",
+             "-b", "eval-branch", str(workspace)],
+            capture_output=True, check=True,
+        )
 
         state = {
             "opponent_elo": 1500,

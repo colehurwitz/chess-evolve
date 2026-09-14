@@ -98,6 +98,21 @@ def workflow() -> Workflow:
 
     # ── 7. Assemble final workflow ──────────────────────────────
     all_nodes: dict = {"games": data_node, **loop_wf.nodes}
+
+    # ── Architecture invariant ───────────────────────────────────
+    # Subgraph nodes (generator, game_gate, exit_game-loop) are spread
+    # into the top-level nodes dict via **loop_wf.nodes. This is REQUIRED
+    # for Workflow.subgraph() extraction.
+    #
+    # CRITICAL: These nodes must be FROZEN during evolution. mutations.py's
+    # validate_and_repair() does NOT add DataNode->subgraph_entry implicit
+    # edges (unlike validation.py), so subgraph nodes appear unreachable
+    # and get PRUNED. evolution.py must freeze all subgraph nodes via
+    # compute_frozen_nodes(), not just the DataNode itself.
+    #
+    # Framework fix tracked upstream: mutations.py should add DataNode
+    # implicit edges to match validation.py (line 43-47).
+
     return Workflow(
         name="chess-game",
         nodes=all_nodes,

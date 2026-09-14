@@ -252,8 +252,7 @@ def _infer_generation(workspace: Path) -> int:
             return int(env_val)
         except (ValueError, TypeError):
             pass
-    # workspace is an eval worktree; project root is two levels up
-    project_root = workspace.parent.parent
+    project_root = _resolve_project_root(workspace)
     ref_dir = project_root / ".factory" / "outer_loop" / "reflections"
     if ref_dir.is_dir():
         count = sum(1 for p in ref_dir.glob("gen*.json") if p.is_file())
@@ -263,6 +262,24 @@ def _infer_generation(workspace: Path) -> int:
 
 
 # ── GameTask — full game evaluation ─────────────────────────────
+
+
+def _resolve_project_root(workspace: Path) -> Path:
+    """Resolve the true project root, handling eval worktrees correctly.
+
+    Eval worktrees live at /home/lab/.eval-worktrees/wt-*/ where
+    workspace.parent.parent resolves to /home/lab/ (WRONG).
+    Use git rev-parse --git-common-dir to find the real root.
+    """
+    import subprocess
+    result = subprocess.run(
+        ['git', '-C', str(workspace), 'rev-parse',
+         '--path-format=absolute', '--git-common-dir'],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return Path(result.stdout.strip()).parent
+    return workspace
 
 
 def _extract_blunders(
@@ -399,7 +416,7 @@ class GameTask(Task):
         # ── Persist completed game to outer_loop/games/ ──
         if state.get("game_over") is True:
             try:
-                project_root = workspace.parent.parent
+                project_root = _resolve_project_root(workspace)
                 gen_num = _infer_generation(workspace)
                 games_dir = (
                     project_root / ".factory" / "outer_loop" / "games"

@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from factory.outer_loop import SwarmConfig, SwarmEngine
-from factory.outer_loop.evaluator import SwarmEvaluator
 from factory.outer_loop.designer import DesignerAgent
+from factory.outer_loop.evaluator import SwarmEvaluator
 from factory.workflow.primitives import AgentNode
 
-from chess_evolve.pipeline import build_position_eval_workflow, BUILDER_PROMPT
+from chess_evolve.pipeline import BUILDER_PROMPT, build_position_eval_workflow, compute_frozen_nodes
 from chess_evolve.tasks import PositionTask
 
 
@@ -54,12 +54,12 @@ def main(
         if model_override and "generator" in workflow.nodes:
             workflow.nodes["generator"].model = model_override
         task_module = "chess_evolve.tasks:GameTask"
-        frozen = ["games"]
+        frozen = compute_frozen_nodes(workflow, "games")
     else:
         task = PositionTask()
         workflow = build_position_eval_workflow()
         task_module = "chess_evolve.tasks:PositionTask"
-        frozen = ["positions"]
+        frozen = compute_frozen_nodes(workflow, "positions")
 
     config = SwarmConfig(
         benchmark="chess-evolve",
