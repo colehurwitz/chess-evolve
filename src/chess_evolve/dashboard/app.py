@@ -88,6 +88,20 @@ h2{font-size:1rem;margin:16px 0 8px;color:#8b949e}
 .move-history{font-size:.72rem;color:#8b949e;font-family:monospace;margin-top:6px;max-height:60px;overflow-y:auto;word-break:break-all}
 .no-games{text-align:center;color:#6e7681;padding:40px;font-size:1rem}
 
+/* Game history */
+.history-gen-header{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin-bottom:4px;cursor:pointer;font-size:.9rem;font-family:monospace;user-select:none}
+.history-gen-header:hover{background:#1c2128}
+.history-gen-body{display:none;background:#0d1117;border:1px solid #21262d;border-radius:0 0 6px 6px;padding:10px 14px;margin-top:-5px;margin-bottom:4px}
+.history-gen-body.open{display:block}
+.history-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:1100px){.history-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.history-grid{grid-template-columns:1fr}}
+.history-card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px}
+.result-badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:.75rem;font-weight:700;margin-right:4px}
+.result-badge.win{background:#3fb950;color:#000}
+.result-badge.draw{background:#8b949e;color:#000}
+.result-badge.loss{background:#f85149;color:#000}
+
 .chart-legend{font-size:.75rem;color:#8b949e;margin-top:4px}
 .chart-legend span{margin-right:12px}
 .legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:3px}
@@ -123,6 +137,9 @@ h2{font-size:1rem;margin:16px 0 8px;color:#8b949e}
 
 <h2>Live Chess Boards</h2>
 <div id="boards-container"><div class="no-games">No active games</div></div>
+
+<h2>Game History</h2>
+<div id="history-container"><div class="no-games">No game history</div></div>
 
 <script>
 (function(){
@@ -405,6 +422,112 @@ h2{font-size:1rem;margin:16px 0 8px;color:#8b949e}
   pollGames();
   setInterval(pollGames,3000);
 
+  /* ---------- Game History ---------- */
+  var historyContainer=document.getElementById('history-container');
+  var HIST_SQ=20;
+
+  function renderMiniBoard(fen, flipBoard){
+    var board=parseFEN(fen);
+    var size=HIST_SQ*8;
+    var svg='<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'" xmlns="http://www.w3.org/2000/svg">';
+    for(var r=0;r<8;r++){
+      for(var f=0;f<8;f++){
+        var displayR=flipBoard?7-r:r;
+        var displayF=flipBoard?7-f:f;
+        var isLight=(displayR+displayF)%2===0;
+        var x=f*HIST_SQ, y=r*HIST_SQ;
+        svg+='<rect x="'+x+'" y="'+y+'" width="'+HIST_SQ+'" height="'+HIST_SQ+'" fill="'+(isLight?LIGHT_SQ:DARK_SQ)+'"/>';
+        var piece=board[displayR][displayF];
+        if(piece){
+          var ch=PIECE_MAP[piece]||'?';
+          svg+='<text x="'+(x+HIST_SQ/2)+'" y="'+(y+HIST_SQ*0.78)+'" text-anchor="middle" font-size="'+(HIST_SQ*0.75)+'" fill="'+(piece===piece.toUpperCase()?'#fff':'#111')+'">'+ch+'</text>';
+        }
+      }
+    }
+    svg+='</svg>';
+    return svg;
+  }
+
+  function renderMiniEvalBar(evalCurve, height){
+    return renderEvalBar(evalCurve, height);
+  }
+
+  function resultBadge(result){
+    var cls='draw';
+    if(result==='win')cls='win';
+    else if(result==='loss')cls='loss';
+    return '<span class="result-badge '+cls+'">'+escHtml(result||'?')+'</span>';
+  }
+
+  function buildHistoryCards(games, genBody){
+    var html='<div class="history-grid">';
+    games.forEach(function(g){
+      var flip=g.color==='black';
+      var bh=HIST_SQ*8;
+      var fen=g.fen||'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+      html+='<div class="history-card">';
+      html+=resultBadge(g.result);
+      html+=' <span style="font-size:.8rem;color:#8b949e">vs '+(g.opponent_elo||'?')+' ('+escHtml(g.color||'?')+')</span>';
+      html+='<div class="board-wrapper" style="margin-top:6px">';
+      html+=renderMiniEvalBar(g.eval_curve, bh);
+      html+=renderMiniBoard(fen, flip);
+      html+='</div>';
+      html+='<div style="font-size:.72rem;color:#8b949e;margin-top:4px">'+
+        (g.move_count||0)+' moves</div>';
+      if(g.move_list&&g.move_list.length>0){
+        html+='<div class="move-history">'+escHtml(formatMoves(g.move_list))+'</div>';
+      }
+      html+='</div>';
+    });
+    html+='</div>';
+    genBody.innerHTML=html;
+  }
+
+  function fetchGameHistory(){
+    fetch('/game-history?max_generations=10').then(function(r){return r.json()}).then(function(data){
+      if(!Array.isArray(data)||data.length===0){
+        historyContainer.innerHTML='<div class="no-games">No game history</div>';
+        return;
+      }
+      var html='';
+      data.forEach(function(gen, idx){
+        var games=gen.games||[];
+        var wins=0,draws=0,losses=0;
+        games.forEach(function(g){
+          if(g.result==='win')wins++;
+          else if(g.result==='draw')draws++;
+          else losses++;
+        });
+        var summary=games.length+' games: '+wins+'W/'+draws+'D/'+losses+'L';
+        html+='<div class="history-gen-header" data-gen-idx="'+idx+'">&#9654; Gen '+gen.generation+' &mdash; '+summary+'</div>';
+        html+='<div class="history-gen-body" data-gen-idx="'+idx+'"></div>';
+      });
+      historyContainer.innerHTML=html;
+
+      // Attach click handlers for lazy rendering
+      var headers=historyContainer.querySelectorAll('.history-gen-header');
+      headers.forEach(function(hdr){
+        hdr.addEventListener('click',function(){
+          var idx=parseInt(hdr.getAttribute('data-gen-idx'));
+          var body=historyContainer.querySelectorAll('.history-gen-body')[idx];
+          if(body.classList.contains('open')){
+            body.classList.remove('open');
+          }else{
+            body.classList.add('open');
+            if(!body.getAttribute('data-rendered')){
+              buildHistoryCards(data[idx].games||[], body);
+              body.setAttribute('data-rendered','1');
+            }
+          }
+        });
+      });
+    }).catch(function(e){
+      historyContainer.innerHTML='<div class="no-games" style="color:#f85149">Failed to load game history</div>';
+    });
+  }
+
+  fetchGameHistory();
+
 })();
 </script>
 </body>
@@ -537,6 +660,49 @@ def create_app(
                 logger.warning("Skipping %s: %s", game_file, exc)
                 continue
         return JSONResponse(result)
+
+    @app.get("/game-history")
+    async def game_history(max_generations: int = 10) -> JSONResponse:
+        """Return persisted game history grouped by generation."""
+        games_dir = root / ".factory" / "outer_loop" / "games"
+        if not games_dir.is_dir():
+            return JSONResponse([])
+        gen_dirs = sorted(games_dir.glob("gen*"), reverse=True)
+        results: list[dict] = []
+        for gen_dir in gen_dirs[:max_generations]:
+            if not gen_dir.is_dir():
+                continue
+            # Extract generation number from directory name
+            gen_name = gen_dir.name  # e.g. "gen0", "gen12"
+            try:
+                gen_num = int(gen_name.replace("gen", ""))
+            except (ValueError, TypeError):
+                continue
+            games: list[dict] = []
+            for game_file in sorted(gen_dir.glob("*.json")):
+                try:
+                    data = json.loads(game_file.read_text())
+                except (json.JSONDecodeError, OSError) as exc:
+                    logger.warning("Skipping malformed game %s: %s", game_file, exc)
+                    continue
+                games.append({
+                    "instance_id": data.get("instance_id", game_file.stem),
+                    "filename": game_file.name,
+                    "opponent_elo": data.get("opponent_elo", 0),
+                    "color": data.get("color", "white"),
+                    "result": data.get("result", "unknown"),
+                    "move_count": data.get("move_count", len(data.get("move_list", []))),
+                    "move_list": data.get("move_list", []),
+                    "eval_curve": data.get("eval_curve", []),
+                    "fen": data.get("fen", ""),
+                })
+            results.append({
+                "generation": gen_num,
+                "games": games,
+            })
+        # Sort descending by generation
+        results.sort(key=lambda g: g["generation"], reverse=True)
+        return JSONResponse(results)
 
     @app.get("/outer-loop/events")
     async def outer_loop_events() -> EventSourceResponse:
