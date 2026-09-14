@@ -181,3 +181,19 @@ def build_game_eval_workflow(cfg: PipelineConfig | None = None) -> Workflow:
         edges=loop_wf.edges,
         start_node="games",
     )
+
+
+def compute_frozen_nodes(workflow: Workflow, data_node_id: str) -> list[str]:
+    """Return all node IDs that must be frozen: the DataNode + all its subgraph nodes.
+
+    validate_and_repair() in mutations.py does NOT add DataNode implicit edges
+    to its reachability graph (unlike validation.py). This means subgraph nodes
+    appear unreachable and get pruned. Freezing them prevents this.
+    """
+    from factory.workflow.executor import _collect_subgraph_nodes
+
+    data_node = workflow.nodes[data_node_id]
+    subgraph_ids = _collect_subgraph_nodes(
+        workflow, data_node.subgraph_entry, data_node.subgraph_exit
+    )
+    return [data_node_id] + list(subgraph_ids)
