@@ -11,6 +11,7 @@ drive a subgraph and score the result.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -20,6 +21,8 @@ from typing import Iterator
 import chess
 import chess.engine
 from factory.task import Task, TaskInstance, VerifyResult
+
+logger = logging.getLogger(__name__)
 
 from chess_evolve.config import ELO_OPTIONS, resolve_stockfish
 
@@ -408,7 +411,7 @@ class GameTask(Task):
                 (games_dir / filename).write_text(
                     json.dumps(state, indent=2),
                 )
-            except Exception:  # noqa: BLE001
-                pass  # persistence must never break verify()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to persist game %s: %s", instance.id, exc)
 
         return verify_result

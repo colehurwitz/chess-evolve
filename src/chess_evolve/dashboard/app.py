@@ -667,7 +667,13 @@ def create_app(
         games_dir = root / ".factory" / "outer_loop" / "games"
         if not games_dir.is_dir():
             return JSONResponse([])
-        gen_dirs = sorted(games_dir.glob("gen*"), reverse=True)
+        def _gen_sort_key(p: Path) -> int:
+            try:
+                return int(p.name.replace("gen", ""))
+            except (ValueError, TypeError):
+                return -1
+
+        gen_dirs = sorted(games_dir.glob("gen*"), key=_gen_sort_key, reverse=True)
         results: list[dict] = []
         for gen_dir in gen_dirs[:max_generations]:
             if not gen_dir.is_dir():
@@ -682,8 +688,10 @@ def create_app(
             for game_file in sorted(gen_dir.glob("*.json")):
                 try:
                     data = json.loads(game_file.read_text())
-                except (json.JSONDecodeError, OSError) as exc:
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
                     logger.warning("Skipping malformed game %s: %s", game_file, exc)
+                    continue
+                if not isinstance(data, dict):
                     continue
                 games.append({
                     "instance_id": data.get("instance_id", game_file.stem),
