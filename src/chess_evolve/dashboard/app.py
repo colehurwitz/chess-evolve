@@ -280,7 +280,7 @@ h2{font-size:1rem;margin:16px 0 8px;color:#8b949e}
       var gen=g.generation;
       var sugs=g.typed_suggestions||[];
       var summary=sugs.map(function(s){return s.operator}).join(', ')||'no mutations';
-      html+='<div class="gen-header" onclick="this.nextElementSibling.classList.toggle(\'open\')">';
+      html+='<div class="gen-header" onclick="this.nextElementSibling.classList.toggle(\\x27open\\x27)">';
       html+='&#9654; Gen '+gen+' &mdash; '+summary+'</div>';
       html+='<div class="gen-body">';
       if(sugs.length===0){html+='<div style="color:#6e7681">No suggestions</div>'}
