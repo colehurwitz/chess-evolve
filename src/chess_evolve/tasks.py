@@ -11,14 +11,18 @@ drive a subgraph and score the result.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Iterator
 
 import chess
 import chess.engine
 from factory.task import Task, TaskInstance, VerifyResult
+
+logger = logging.getLogger(__name__)
 
 from chess_evolve.config import ELO_OPTIONS, resolve_stockfish
 
@@ -232,6 +236,32 @@ class PositionTask(Task):
         )
 
 
+# ── Game persistence helpers ────────────────────────────────────
+
+
+def _infer_generation(workspace: Path) -> int:
+    """Infer the current generation number.
+
+    Checks ``FACTORY_GENERATION`` env var first, then counts ``gen*.json``
+    files in ``{project_root}/.factory/outer_loop/reflections/`` + 1 (since
+    reflections lag by one generation).  Falls back to ``0``.
+    """
+    env_val = os.environ.get("FACTORY_GENERATION")
+    if env_val is not None:
+        try:
+            return int(env_val)
+        except (ValueError, TypeError):
+            pass
+    # workspace is an eval worktree; project root is two levels up
+    project_root = workspace.parent.parent
+    ref_dir = project_root / ".factory" / "outer_loop" / "reflections"
+    if ref_dir.is_dir():
+        count = sum(1 for p in ref_dir.glob("gen*.json") if p.is_file())
+        if count > 0:
+            return count  # reflections lag by 1, so count == current gen
+    return 0
+
+
 # ── GameTask — full game evaluation ─────────────────────────────
 
 
@@ -349,7 +379,7 @@ class GameTask(Task):
         composite = position_score + outcome_bonus
 
         passed = result in ("win", "draw")
-        return VerifyResult(
+        verify_result = VerifyResult(
             passed=passed,
             score=composite,
             details={
@@ -365,3 +395,23 @@ class GameTask(Task):
                 "composite_score": composite,
             },
         )
+
+        # ── Persist completed game to outer_loop/games/ ──
+        if state.get("game_over") is True:
+            try:
+                project_root = workspace.parent.parent
+                gen_num = _infer_generation(workspace)
+                games_dir = (
+                    project_root / ".factory" / "outer_loop" / "games"
+                    / f"gen{gen_num}"
+                )
+                games_dir.mkdir(parents=True, exist_ok=True)
+                ts = int(time.time())
+                filename = f"{instance.id}_{ts}.json"
+                (games_dir / filename).write_text(
+                    json.dumps(state, indent=2),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to persist game %s: %s", instance.id, exc)
+
+        return verify_result

@@ -377,3 +377,205 @@ async def test_dashboard_html_contains_chess_elements(
     # Eval bar
     assert "eval-bar" in html
     assert "eval_curve" in html
+
+
+# ---------------------------------------------------------------------------
+# Game history endpoint tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_game_history_endpoint(tmp_path: Path) -> None:
+    """Create mock games in gen0/ and gen1/, verify response format."""
+    games_dir = tmp_path / ".factory" / "outer_loop" / "games"
+    gen0 = games_dir / "gen0"
+    gen0.mkdir(parents=True)
+    gen1 = games_dir / "gen1"
+    gen1.mkdir(parents=True)
+
+    game0 = {
+        "opponent_elo": 1320,
+        "color": "white",
+        "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+        "move_list": ["e2e4"],
+        "eval_curve": [30],
+        "move_count": 1,
+        "result": "win",
+        "game_over": True,
+    }
+    game1 = {
+        "opponent_elo": 1500,
+        "color": "black",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "move_list": ["e2e4", "e7e5"],
+        "eval_curve": [30, 20],
+        "move_count": 2,
+        "result": "loss",
+        "game_over": True,
+    }
+    (gen0 / "elo1320_white_100.json").write_text(json.dumps(game0))
+    (gen1 / "elo1500_black_200.json").write_text(json.dumps(game1))
+
+    app = create_app(project_root=tmp_path)
+    transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/game-history")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) == 2
+    # Sorted descending by generation
+    assert body[0]["generation"] == 1
+    assert body[1]["generation"] == 0
+    # Check game fields
+    assert len(body[1]["games"]) == 1
+    g = body[1]["games"][0]
+    assert g["opponent_elo"] == 1320
+    assert g["result"] == "win"
+    assert g["move_list"] == ["e2e4"]
+
+
+@pytest.mark.asyncio
+async def test_game_history_empty(tmp_path: Path) -> None:
+    """No games dir → returns []."""
+    app = create_app(project_root=tmp_path)
+    transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/game-history")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_game_history_malformed_json(tmp_path: Path) -> None:
+    """One corrupt + one valid file → returns only the valid one."""
+    gen_dir = tmp_path / ".factory" / "outer_loop" / "games" / "gen0"
+    gen_dir.mkdir(parents=True)
+
+    (gen_dir / "bad_game.json").write_text("{corrupt json!!!")
+    valid = {
+        "opponent_elo": 1320,
+        "color": "white",
+        "fen": "startpos",
+        "move_list": [],
+        "eval_curve": [],
+        "move_count": 0,
+        "result": "draw",
+        "game_over": True,
+    }
+    (gen_dir / "good_game.json").write_text(json.dumps(valid))
+
+    app = create_app(project_root=tmp_path)
+    transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/game-history")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert len(body[0]["games"]) == 1
+    assert body[0]["games"][0]["result"] == "draw"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_html_contains_game_history_elements(
+    client: httpx.AsyncClient,
+) -> None:
+    """Verify HTML contains game history UI identifiers."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "history-container" in html
+    assert "fetchGameHistory" in html
+    assert "result-badge" in html
+    assert "history-gen-header" in html
+    assert "history-grid" in html
+    assert "Game History" in html
+
+
+@pytest.mark.asyncio
+async def test_game_history_renders_boards(tmp_path: Path) -> None:
+    """Playwright: start dashboard with mock game data, verify rendering."""
+    # Skip if playwright browsers not installed
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        pytest.skip("playwright not installed")
+
+    # Set up mock game data
+    gen_dir = tmp_path / ".factory" / "outer_loop" / "games" / "gen0"
+    gen_dir.mkdir(parents=True)
+    game = {
+        "opponent_elo": 1320,
+        "color": "white",
+        "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+        "move_list": ["e2e4"],
+        "eval_curve": [30],
+        "move_count": 1,
+        "result": "win",
+        "game_over": True,
+    }
+    (gen_dir / "elo1320_white_100.json").write_text(json.dumps(game))
+
+    # Start server in background
+    import uvicorn
+
+    app = create_app(project_root=tmp_path)
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error")
+    server = uvicorn.Server(config)
+
+    # Find an available port
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="error",
+    )
+    server = uvicorn.Server(config)
+
+    server_task = asyncio.ensure_future(server.serve())
+    # Wait for server to start
+    await asyncio.sleep(0.5)
+
+    try:
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.launch(headless=True)
+            except Exception:
+                pytest.skip("Playwright browser not available")
+                return
+            page = await browser.new_page()
+            await page.goto(f"http://127.0.0.1:{port}/")
+
+            # Wait for game history to load
+            await page.wait_for_selector("#history-container", timeout=5000)
+
+            # Verify history section is visible
+            history = await page.query_selector("#history-container")
+            assert history is not None
+
+            # Check that a generation header exists
+            header = await page.query_selector(".history-gen-header")
+            assert header is not None
+
+            # Click to expand
+            await header.click()
+            await page.wait_for_selector(
+                ".history-gen-body.open", timeout=3000,
+            )
+
+            # Check SVG boards render
+            svg = await page.query_selector(".history-card svg")
+            assert svg is not None
+
+            # Check result badge
+            badge = await page.query_selector(".result-badge.win")
+            assert badge is not None
+
+            await browser.close()
+    finally:
+        server.should_exit = True
+        await server_task

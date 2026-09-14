@@ -7,6 +7,7 @@ No live LLM, no live Stockfish — all external dependencies are mocked via
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +16,7 @@ import chess.engine
 import pytest
 
 from chess_evolve.config import ELO_OPTIONS
-from chess_evolve.tasks import GameTask, _extract_blunders
+from chess_evolve.tasks import GameTask, _extract_blunders, _infer_generation
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -506,3 +507,157 @@ class TestBuildGameEvalWorkflow:
             f"subgraph_entry={data_node.subgraph_entry!r} "
             f"not found in nodes: {list(wf.nodes.keys())}"
         )
+
+
+# ── TestInferGeneration ─────────────────────────────────────────
+
+
+class TestInferGeneration:
+    def test_env_var_preferred(self, tmp_path: Path) -> None:
+        """FACTORY_GENERATION env var takes precedence."""
+        workspace = tmp_path / "project" / "worktree"
+        workspace.mkdir(parents=True)
+        with patch.dict(os.environ, {"FACTORY_GENERATION": "5"}):
+            assert _infer_generation(workspace) == 5
+
+    def test_counts_reflection_files(self, tmp_path: Path) -> None:
+        """Counts gen*.json files in reflections directory."""
+        # workspace.parent.parent must equal project_root
+        project_root = tmp_path
+        ref_dir = project_root / ".factory" / "outer_loop" / "reflections"
+        ref_dir.mkdir(parents=True)
+        (ref_dir / "gen0.json").write_text("{}")
+        (ref_dir / "gen1.json").write_text("{}")
+        workspace = project_root / "eval" / "wt-test"
+        workspace.mkdir(parents=True)
+        with patch.dict(os.environ, {}, clear=True):
+            # Ensure FACTORY_GENERATION not set
+            os.environ.pop("FACTORY_GENERATION", None)
+            assert _infer_generation(workspace) == 2
+
+    def test_falls_back_to_zero(self, tmp_path: Path) -> None:
+        """No env var and no reflections → returns 0."""
+        workspace = tmp_path / "eval" / "wt-test"
+        workspace.mkdir(parents=True)
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("FACTORY_GENERATION", None)
+            assert _infer_generation(workspace) == 0
+
+
+# ── TestGameTaskPersistence ─────────────────────────────────────
+
+
+class TestGameTaskPersistence:
+    def _make_instance(
+        self, elo: int = 1500, color: str = "white",
+    ):
+        from factory.task import TaskInstance
+
+        return TaskInstance(
+            id=f"elo{elo}_{color}",
+            metadata={"opponent_elo": elo, "color": color},
+        )
+
+    def test_verify_persists_game_state(self, tmp_path: Path) -> None:
+        """Completed games (game_over=True) are persisted to games dir."""
+        # Set up workspace inside a fake project structure:
+        # project_root / worktree  (workspace = worktree,
+        #   workspace.parent.parent = project_root)
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        workspace = project_root / "eval" / "wt-test"
+        workspace.mkdir(parents=True)
+
+        state = {
+            "opponent_elo": 1500,
+            "color": "white",
+            "fen": chess.Board().fen(),
+            "move_list": ["e2e4", "e7e5", "d2d4"],
+            "eval_curve": [50, 80, 120],
+            "illegal_attempts": 0,
+            "move_count": 3,
+            "result": "win",
+            "game_over": True,
+        }
+        _write_game_state(workspace, state)
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("FACTORY_GENERATION", None)
+            result = GameTask().verify(self._make_instance(), workspace)
+
+        assert result.passed is True
+        assert result.details["result"] == "win"
+
+        # Verify persistence: file should exist in project_root games dir
+        games_dir = project_root / ".factory" / "outer_loop" / "games" / "gen0"
+        assert games_dir.is_dir()
+        game_files = list(games_dir.glob("elo1500_white_*.json"))
+        assert len(game_files) == 1
+
+        persisted = json.loads(game_files[0].read_text())
+        assert persisted["result"] == "win"
+        assert persisted["move_list"] == ["e2e4", "e7e5", "d2d4"]
+        assert persisted["game_over"] is True
+
+    def test_verify_does_not_persist_incomplete_game(
+        self, tmp_path: Path,
+    ) -> None:
+        """Incomplete games (game_over=False) are NOT persisted."""
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        workspace = project_root / "eval" / "wt-test"
+        workspace.mkdir(parents=True)
+
+        state = {
+            "opponent_elo": 1500,
+            "color": "white",
+            "fen": chess.Board().fen(),
+            "move_list": ["e2e4"],
+            "eval_curve": [50],
+            "illegal_attempts": 0,
+            "move_count": 1,
+            "result": None,
+            "game_over": False,
+        }
+        _write_game_state(workspace, state)
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("FACTORY_GENERATION", None)
+            GameTask().verify(self._make_instance(), workspace)
+
+        # Verify did NOT persist
+        games_dir = project_root / ".factory" / "outer_loop" / "games"
+        assert not games_dir.exists()
+
+    def test_persistence_failure_does_not_break_verify(
+        self, tmp_path: Path,
+    ) -> None:
+        """Even if persistence raises, verify() still returns normally."""
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        workspace = project_root / "eval" / "wt-test"
+        workspace.mkdir(parents=True)
+
+        state = {
+            "opponent_elo": 1500,
+            "color": "white",
+            "fen": chess.Board().fen(),
+            "move_list": ["e2e4"],
+            "eval_curve": [50],
+            "illegal_attempts": 0,
+            "move_count": 1,
+            "result": "win",
+            "game_over": True,
+        }
+        _write_game_state(workspace, state)
+
+        # Make the games dir path un-writable to trigger an error
+        games_parent = project_root / ".factory" / "outer_loop"
+        games_parent.mkdir(parents=True)
+        # Create a file where the directory should be (can't mkdir over a file)
+        (games_parent / "games").write_text("block")
+
+        result = GameTask().verify(self._make_instance(), workspace)
+        # verify() should still succeed
+        assert result.passed is True
+        assert result.details["result"] == "win"
